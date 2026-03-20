@@ -4,6 +4,8 @@ services/covers.py — Extract the cover image from various file formats.
 Outputs a JPEG thumbnail saved to data/covers/<book_id>.jpg.
 """
 
+from __future__ import annotations
+
 import io
 import zipfile
 from pathlib import Path

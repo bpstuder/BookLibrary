@@ -6,416 +6,838 @@
 <title>Manga Collection</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 :root {
-  --bg: #0f0f13;
-  --surface: #18181f;
-  --surface2: #22222c;
-  --border: #2e2e3a;
-  --text: #e2e2ec;
-  --muted: #7a7a90;
-  --accent: #7b61ff;
-  --accent2: #a78bfa;
-  --green: #22c55e;
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --blue: #3b82f6;
-  --radius: 10px;
-  --sidebar: 240px;
+  --bg: #0f0f13; --surface: #18181f; --surface2: #22222c; --surface3: #2a2a36;
+  --border: #2e2e3a; --text: #e2e2ec; --muted: #7a7a90;
+  --accent: #7b61ff; --accent2: #a78bfa;
+  --green: #22c55e; --amber: #f59e0b; --red: #ef4444; --blue: #3b82f6;
+  --radius: 10px; --sidebar: 240px;
 }
+body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
+  color:var(--text); min-height:100vh; display:flex; font-size:14px; }
 
-body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
-  color: var(--text); min-height: 100vh; display: flex; font-size: 14px; }
+/* ── Sidebar ── */
+#sidebar { width:var(--sidebar); min-height:100vh; background:var(--surface);
+  border-right:1px solid var(--border); display:flex; flex-direction:column;
+  padding:1.25rem 0; position:fixed; top:0; left:0; bottom:0; z-index:10; }
+.logo { padding:0 1.25rem 1.25rem; font-size:1.1rem; font-weight:700; color:var(--accent2);
+  border-bottom:1px solid var(--border); margin-bottom:.75rem; }
+.logo span { color:var(--muted); font-weight:400; font-size:.8rem; display:block; }
+.nav-item { display:flex; align-items:center; gap:.6rem; padding:.55rem 1.25rem;
+  cursor:pointer; color:var(--muted); border-left:3px solid transparent;
+  transition:all .15s; font-size:.9rem; }
+.nav-item:hover { color:var(--text); background:var(--surface2); }
+.nav-item.active { color:var(--accent2); border-left-color:var(--accent); background:rgba(123,97,255,.08); }
+.nav-icon { font-size:1rem; width:18px; text-align:center; }
+.nav-section { padding:.5rem 1.25rem .2rem; font-size:.7rem; color:var(--muted);
+  text-transform:uppercase; letter-spacing:.08em; margin-top:.5rem; }
+.sidebar-bottom { margin-top:auto; padding:1rem 1.25rem 0; border-top:1px solid var(--border);
+  display:flex; flex-direction:column; gap:.5rem; }
+.scan-btn { width:100%; padding:.55rem; background:var(--accent); color:#fff;
+  border:none; border-radius:8px; cursor:pointer; font-size:.88rem; font-weight:600; transition:opacity .15s; }
+.scan-btn:hover { opacity:.85; }
+.settings-btn { width:100%; padding:.5rem; background:var(--surface2); color:var(--muted);
+  border:1px solid var(--border); border-radius:8px; cursor:pointer; font-size:.85rem; transition:all .15s; }
+.settings-btn:hover { color:var(--text); border-color:var(--accent); }
 
-/* ── Sidebar ─────────────────────────────────────────────────── */
-#sidebar {
-  width: var(--sidebar); min-height: 100vh; background: var(--surface);
-  border-right: 1px solid var(--border); display: flex; flex-direction: column;
-  padding: 1.25rem 0; position: fixed; top: 0; left: 0; bottom: 0; z-index: 10;
-}
-.logo { padding: 0 1.25rem 1.25rem; font-size: 1.1rem; font-weight: 700;
-  color: var(--accent2); letter-spacing: .01em; border-bottom: 1px solid var(--border);
-  margin-bottom: .75rem; }
-.logo span { color: var(--muted); font-weight: 400; font-size: .8rem; display: block; }
-.nav-item { display: flex; align-items: center; gap: .6rem; padding: .55rem 1.25rem;
-  cursor: pointer; color: var(--muted); border-left: 3px solid transparent;
-  transition: all .15s; font-size: .9rem; }
-.nav-item:hover { color: var(--text); background: var(--surface2); }
-.nav-item.active { color: var(--accent2); border-left-color: var(--accent);
-  background: rgba(123,97,255,.08); }
-.nav-icon { font-size: 1rem; width: 18px; text-align: center; }
-.nav-section { padding: .5rem 1.25rem .2rem; font-size: .7rem; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .08em; margin-top: .5rem; }
-.sidebar-bottom { margin-top: auto; padding: 1rem 1.25rem 0;
-  border-top: 1px solid var(--border); }
-.scan-btn { width: 100%; padding: .55rem; background: var(--accent);
-  color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: .88rem;
-  font-weight: 600; transition: opacity .15s; }
-.scan-btn:hover { opacity: .85; }
+/* ── Main ── */
+#main { margin-left:var(--sidebar); flex:1; padding:1.5rem 2rem; min-height:100vh; }
+#library-page.hidden, #settings-page { display:none; }
+#settings-page.active { display:block; }
 
-/* ── Main content ─────────────────────────────────────────────── */
-#main { margin-left: var(--sidebar); flex: 1; padding: 1.5rem 2rem; min-height: 100vh; }
+/* ── Toolbar ── */
+#toolbar { display:flex; gap:.75rem; align-items:center; margin-bottom:1.25rem; flex-wrap:wrap; }
+#search-input { flex:1; min-width:180px; padding:.5rem .75rem; background:var(--surface);
+  border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:.9rem; outline:none; }
+#search-input:focus { border-color:var(--accent); }
+.filter-select { padding:.5rem .65rem; background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); font-size:.85rem; cursor:pointer; outline:none; }
+.view-toggle { display:flex; gap:2px; background:var(--surface2); padding:3px; border-radius:8px; }
+.view-btn { padding:.3rem .55rem; border:none; background:none; cursor:pointer; color:var(--muted);
+  border-radius:6px; font-size:.9rem; transition:all .12s; }
+.view-btn.active { background:var(--surface); color:var(--text); }
+#result-count { color:var(--muted); font-size:.82rem; white-space:nowrap; }
 
-/* ── Toolbar ──────────────────────────────────────────────────── */
-#toolbar { display: flex; gap: .75rem; align-items: center; margin-bottom: 1.5rem;
-  flex-wrap: wrap; }
-#search-input { flex: 1; min-width: 200px; padding: .5rem .75rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  color: var(--text); font-size: .9rem; outline: none; }
-#search-input:focus { border-color: var(--accent); }
-.filter-select { padding: .5rem .75rem; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 8px; color: var(--text);
-  font-size: .88rem; cursor: pointer; outline: none; }
-.view-toggle { display: flex; gap: 2px; background: var(--surface2);
-  padding: 3px; border-radius: 8px; }
-.view-btn { padding: .3rem .55rem; border: none; background: none; cursor: pointer;
-  color: var(--muted); border-radius: 6px; font-size: .9rem; transition: all .12s; }
-.view-btn.active { background: var(--surface); color: var(--text); }
-#result-count { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+/* ── Stats bar ── */
+#stats-bar { display:flex; gap:.75rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+.stat-card { background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:.65rem 1rem; flex:1; min-width:100px; }
+.stat-label { color:var(--muted); font-size:.72rem; margin-bottom:.2rem; }
+.stat-value { font-size:1.3rem; font-weight:700; }
+.stat-value.accent { color:var(--accent2); }
+.stat-value.green  { color:var(--green); }
+.stat-value.amber  { color:var(--amber); }
 
-/* ── Stats bar ────────────────────────────────────────────────── */
-#stats-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-.stat-card { background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: .75rem 1.25rem; flex: 1; min-width: 120px; }
-.stat-label { color: var(--muted); font-size: .75rem; margin-bottom: .25rem; }
-.stat-value { font-size: 1.4rem; font-weight: 700; color: var(--text); }
-.stat-value.accent { color: var(--accent2); }
-.stat-value.green  { color: var(--green);   }
-.stat-value.amber  { color: var(--amber);   }
+/* ── Grid view ── */
+#book-grid { display:grid; gap:1rem; grid-template-columns:repeat(auto-fill,minmax(145px,1fr)); }
+.book-card { background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); overflow:hidden; cursor:pointer;
+  transition:transform .12s, border-color .12s; position:relative; }
+.book-card:hover { transform:translateY(-3px); border-color:var(--accent); }
+.book-cover { width:100%; aspect-ratio:2/3; object-fit:cover; background:var(--surface2); display:block; }
+.book-cover-ph { width:100%; aspect-ratio:2/3; background:var(--surface2);
+  display:flex; align-items:center; justify-content:center; font-size:2.5rem; color:var(--border); }
+.book-info { padding:.55rem .65rem; }
+.book-title  { font-size:.75rem; font-weight:600; line-height:1.3;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.book-series { font-size:.68rem; color:var(--muted); margin-top:.15rem; }
+.status-dot { position:absolute; top:.35rem; right:.35rem; width:7px; height:7px;
+  border-radius:50%; border:1.5px solid var(--surface); }
+.status-dot.unread  { background:var(--muted); }
+.status-dot.reading { background:var(--amber); }
+.status-dot.read    { background:var(--green); }
 
-/* ── Grid view ───────────────────────────────────────────────── */
-#book-grid { display: grid; gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+/* ── List view ── */
+#book-list { display:flex; flex-direction:column; gap:.35rem; }
+.book-row { background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; display:flex; align-items:center; gap:.85rem;
+  padding:.55rem .85rem; cursor:pointer; transition:border-color .12s; }
+.book-row:hover { border-color:var(--accent); }
+.row-thumb { width:34px; height:51px; object-fit:cover; border-radius:4px;
+  background:var(--surface2); flex-shrink:0; }
+.row-thumb-ph { width:34px; height:51px; background:var(--surface2);
+  border-radius:4px; display:flex; align-items:center; justify-content:center;
+  font-size:.95rem; flex-shrink:0; }
+.row-main { flex:1; min-width:0; }
+.row-title { font-weight:600; font-size:.88rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-sub   { font-size:.75rem; color:var(--muted); margin-top:.1rem; }
+.row-meta  { display:flex; gap:.4rem; align-items:center; flex-shrink:0; }
 
-.book-card { background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); overflow: hidden; cursor: pointer;
-  transition: transform .12s, border-color .12s; position: relative; }
-.book-card:hover { transform: translateY(-3px); border-color: var(--accent); }
-.book-cover { width: 100%; aspect-ratio: 2/3; object-fit: cover;
-  background: var(--surface2); display: block; }
-.book-cover-placeholder { width: 100%; aspect-ratio: 2/3; background: var(--surface2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 2.5rem; color: var(--border); }
-.book-info { padding: .6rem .7rem; }
-.book-title { font-size: .78rem; font-weight: 600; line-height: 1.3;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.book-series { font-size: .7rem; color: var(--muted); margin-top: .2rem; }
-.status-dot { position: absolute; top: .4rem; right: .4rem; width: 8px; height: 8px;
-  border-radius: 50%; border: 1.5px solid var(--surface); }
-.status-dot.unread  { background: var(--muted); }
-.status-dot.reading { background: var(--amber);  }
-.status-dot.read    { background: var(--green);  }
+/* ── Table view ── */
+#book-table-wrap { overflow-x:auto; }
+#book-table { width:100%; border-collapse:collapse; font-size:.84rem; }
+#book-table th { background:var(--surface2); padding:.5rem .85rem; text-align:left;
+  font-weight:600; color:var(--muted); font-size:.72rem; text-transform:uppercase;
+  letter-spacing:.06em; border-bottom:1px solid var(--border); white-space:nowrap; }
+#book-table td { padding:.5rem .85rem; border-bottom:1px solid rgba(46,46,58,.5);
+  vertical-align:middle; }
+#book-table tr { cursor:pointer; transition:background .1s; }
+#book-table tr:hover td { background:rgba(123,97,255,.06); }
+.tbl-thumb { width:28px; height:42px; object-fit:cover; border-radius:3px;
+  background:var(--surface2); display:block; }
+.tbl-thumb-ph { width:28px; height:42px; background:var(--surface2); border-radius:3px;
+  display:flex; align-items:center; justify-content:center; font-size:.8rem; }
 
-/* ── List view ───────────────────────────────────────────────── */
-#book-list { display: flex; flex-direction: column; gap: .4rem; }
-.book-row { background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; display: flex; align-items: center; gap: 1rem;
-  padding: .6rem .9rem; cursor: pointer; transition: border-color .12s; }
-.book-row:hover { border-color: var(--accent); }
-.book-row-thumb { width: 36px; height: 54px; object-fit: cover;
-  border-radius: 4px; background: var(--surface2); flex-shrink: 0; }
-.book-row-thumb-placeholder { width: 36px; height: 54px; background: var(--surface2);
-  border-radius: 4px; display: flex; align-items: center; justify-content: center;
-  font-size: 1rem; flex-shrink: 0; }
-.book-row-main { flex: 1; min-width: 0; }
-.book-row-title { font-weight: 600; font-size: .9rem;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.book-row-sub   { font-size: .78rem; color: var(--muted); margin-top: .15rem; }
-.book-row-meta  { display: flex; gap: .5rem; align-items: center; flex-shrink: 0; }
-.type-badge { padding: .15rem .5rem; border-radius: 20px; font-size: .7rem;
-  font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.type-cbz  { background: rgba(123,97,255,.2); color: var(--accent2); }
-.type-epub { background: rgba(34,197,94,.15); color: var(--green); }
-.type-pdf  { background: rgba(239,68,68,.15);  color: var(--red);  }
-.type-mobi { background: rgba(245,158,11,.15); color: var(--amber); }
-.type-cbr  { background: rgba(59,130,246,.15); color: var(--blue); }
-.status-badge { padding: .15rem .5rem; border-radius: 20px; font-size: .7rem;
-  font-weight: 600; }
-.status-badge.unread  { background: rgba(122,122,144,.15); color: var(--muted);  }
-.status-badge.reading { background: rgba(245,158,11,.15);  color: var(--amber); }
-.status-badge.read    { background: rgba(34,197,94,.15);   color: var(--green); }
-.tag-pill { padding: .1rem .45rem; background: var(--surface2); border-radius: 20px;
-  font-size: .7rem; color: var(--muted); }
+/* ── Series view ── */
+#series-grid { display:grid; gap:1rem; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
+.series-card { background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:1rem; cursor:pointer; transition:border-color .12s; }
+.series-card:hover { border-color:var(--accent); }
+.series-name  { font-weight:700; font-size:.95rem; margin-bottom:.3rem; }
+.series-meta  { font-size:.75rem; color:var(--muted); }
+.series-bar   { display:flex; gap:2px; margin-top:.6rem; height:5px; border-radius:3px; overflow:hidden; }
+.series-bar-r { background:var(--green); }
+.series-bar-p { background:var(--amber); }
+.series-bar-u { background:var(--border); }
 
-/* ── Modal ───────────────────────────────────────────────────── */
-#modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7);
-  z-index: 100; display: none; align-items: flex-start; justify-content: center;
-  overflow-y: auto; padding: 2rem 1rem; }
-#modal-overlay.open { display: flex; }
-#modal { background: var(--surface); border: 1px solid var(--border);
-  border-radius: 14px; width: 100%; max-width: 720px;
-  animation: slideUp .18s ease; }
-@keyframes slideUp { from { opacity:0; transform: translateY(20px); } }
-.modal-header { display: flex; gap: 1.5rem; padding: 1.5rem;
-  border-bottom: 1px solid var(--border); }
-.modal-cover { width: 110px; height: 165px; object-fit: cover; border-radius: 8px;
-  background: var(--surface2); flex-shrink: 0; }
-.modal-cover-placeholder { width: 110px; height: 165px; background: var(--surface2);
-  border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font-size: 3rem; flex-shrink: 0; }
-.modal-title-block { flex: 1; }
-.modal-title { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
-.modal-series { color: var(--muted); margin-top: .3rem; font-size: .9rem; }
-.modal-badges { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
-.modal-path  { font-size: .72rem; color: var(--muted); margin-top: .5rem;
-  word-break: break-all; }
-.modal-actions { display: flex; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; }
-.btn { padding: .45rem .9rem; border-radius: 7px; border: none; cursor: pointer;
-  font-size: .85rem; font-weight: 600; transition: opacity .12s; }
-.btn:hover { opacity: .85; }
-.btn-primary { background: var(--accent);  color: #fff; }
-.btn-success { background: var(--green);   color: #fff; }
-.btn-warning { background: var(--amber);   color: #fff; }
-.btn-ghost   { background: var(--surface2); color: var(--text); }
-.btn-danger  { background: var(--red);     color: #fff; }
+/* ── Badges ── */
+.type-badge { padding:.12rem .45rem; border-radius:20px; font-size:.68rem;
+  font-weight:700; text-transform:uppercase; letter-spacing:.04em; flex-shrink:0; }
+.type-cbz   { background:rgba(123,97,255,.2); color:var(--accent2); }
+.type-epub  { background:rgba(34,197,94,.15); color:var(--green); }
+.type-pdf   { background:rgba(239,68,68,.15); color:var(--red); }
+.type-mobi  { background:rgba(245,158,11,.15); color:var(--amber); }
+.type-cbr   { background:rgba(59,130,246,.15); color:var(--blue); }
+.cat-badge  { padding:.12rem .45rem; border-radius:20px; font-size:.68rem; font-weight:600; flex-shrink:0; }
+.cat-manga  { background:rgba(167,139,250,.15); color:var(--accent2); }
+.cat-comics { background:rgba(59,130,246,.15); color:var(--blue); }
+.cat-book   { background:rgba(34,197,94,.15); color:var(--green); }
+.cat-unknown{ background:rgba(122,122,144,.12); color:var(--muted); }
+.status-badge { padding:.12rem .45rem; border-radius:20px; font-size:.68rem; font-weight:600; }
+.status-badge.unread  { background:rgba(122,122,144,.12); color:var(--muted); }
+.status-badge.reading { background:rgba(245,158,11,.15); color:var(--amber); }
+.status-badge.read    { background:rgba(34,197,94,.15); color:var(--green); }
+.tag-pill { padding:.08rem .4rem; background:var(--surface2); border-radius:20px;
+  font-size:.68rem; color:var(--muted); }
 
-/* Modal body */
-.modal-body { padding: 1.25rem 1.5rem; }
-.modal-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border);
-  margin-bottom: 1rem; }
-.modal-tab { padding: .5rem 1rem; cursor: pointer; color: var(--muted); font-size: .88rem;
-  border-bottom: 2px solid transparent; transition: all .12s; }
-.modal-tab.active { color: var(--accent2); border-bottom-color: var(--accent); }
-.modal-panel { display: none; }
-.modal-panel.active { display: block; }
+/* ── Modal ── */
+#modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.75);
+  z-index:100; display:none; align-items:flex-start; justify-content:center;
+  overflow-y:auto; padding:1.5rem 1rem; }
+#modal-overlay.open { display:flex; }
+#modal { background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  width:100%; max-width:760px; animation:slideUp .18s ease; }
+@keyframes slideUp { from { opacity:0; transform:translateY(16px); } }
+.modal-header { display:flex; gap:1.25rem; padding:1.25rem 1.5rem;
+  border-bottom:1px solid var(--border); }
+.modal-cover { width:100px; height:150px; object-fit:cover; border-radius:7px;
+  background:var(--surface2); flex-shrink:0; }
+.modal-cover-ph { width:100px; height:150px; background:var(--surface2);
+  border-radius:7px; display:flex; align-items:center; justify-content:center;
+  font-size:2.5rem; flex-shrink:0; }
+.modal-title-block { flex:1; min-width:0; }
+.modal-title   { font-size:1.2rem; font-weight:700; line-height:1.3; }
+.modal-series  { color:var(--muted); margin-top:.25rem; font-size:.88rem; }
+.modal-badges  { display:flex; gap:.4rem; margin-top:.6rem; flex-wrap:wrap; align-items:center; }
+.modal-path    { font-size:.7rem; color:var(--muted); margin-top:.4rem; word-break:break-all; }
+.modal-actions { display:flex; gap:.4rem; margin-top:.85rem; flex-wrap:wrap; }
+.btn { padding:.42rem .85rem; border-radius:7px; border:none; cursor:pointer;
+  font-size:.83rem; font-weight:600; transition:opacity .12s; }
+.btn:hover { opacity:.85; }
+.btn-primary { background:var(--accent); color:#fff; }
+.btn-success { background:var(--green); color:#fff; }
+.btn-warning { background:var(--amber); color:#fff; }
+.btn-ghost   { background:var(--surface2); color:var(--text); }
+.btn-danger  { background:var(--red); color:#fff; }
+.btn-sm      { padding:.3rem .6rem; font-size:.78rem; }
 
-/* Status selector */
-.status-row { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
-.status-opt { padding: .4rem .9rem; border-radius: 20px; border: 1.5px solid var(--border);
-  cursor: pointer; font-size: .82rem; font-weight: 600; transition: all .12s; }
-.status-opt:hover { border-color: var(--accent); }
-.status-opt.sel-unread  { border-color: var(--muted); color: var(--muted); }
-.status-opt.sel-reading { border-color: var(--amber); color: var(--amber); }
-.status-opt.sel-read    { border-color: var(--green); color: var(--green); }
+/* Modal tabs */
+.modal-body { padding:1.1rem 1.5rem; }
+.modal-tabs { display:flex; border-bottom:1px solid var(--border); margin-bottom:1rem;
+  overflow-x:auto; gap:0; }
+.modal-tab  { padding:.45rem .9rem; cursor:pointer; color:var(--muted); font-size:.85rem;
+  border-bottom:2px solid transparent; transition:all .12s; white-space:nowrap; }
+.modal-tab.active { color:var(--accent2); border-bottom-color:var(--accent); }
+.modal-panel { display:none; }
+.modal-panel.active { display:block; }
+
+/* Status opts */
+.status-row { display:flex; gap:.4rem; margin-bottom:.85rem; }
+.status-opt { padding:.35rem .8rem; border-radius:20px; border:1.5px solid var(--border);
+  cursor:pointer; font-size:.8rem; font-weight:600; transition:all .12s; }
+.status-opt:hover { border-color:var(--accent); }
+.status-opt.sel-unread  { border-color:var(--muted); color:var(--muted); }
+.status-opt.sel-reading { border-color:var(--amber); color:var(--amber); }
+.status-opt.sel-read    { border-color:var(--green); color:var(--green); }
 
 /* Tags */
-.tag-editor { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
-.tag-pill-rm { padding: .2rem .5rem .2rem .6rem; background: var(--surface2);
-  border-radius: 20px; font-size: .75rem; display: flex; align-items: center; gap: .3rem; }
-.tag-pill-rm button { background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: .8rem; padding: 0; line-height: 1; }
-.tag-input-row { display: flex; gap: .5rem; }
-.tag-input { flex: 1; padding: .4rem .65rem; background: var(--surface2);
-  border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: .85rem; }
+.tag-editor { display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.65rem; min-height:28px; }
+.tag-pill-rm { padding:.18rem .45rem .18rem .55rem; background:var(--surface2);
+  border-radius:20px; font-size:.73rem; display:flex; align-items:center; gap:.25rem; }
+.tag-pill-rm button { background:none; border:none; cursor:pointer; color:var(--muted);
+  font-size:.78rem; padding:0; line-height:1; }
+.tag-input-row { display:flex; gap:.4rem; }
+.tag-input { flex:1; padding:.38rem .6rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.83rem; }
 
 /* Metadata */
-.meta-source { margin-bottom: 1rem; background: var(--surface2);
-  border-radius: 8px; padding: .75rem 1rem; }
-.meta-source-header { display: flex; justify-content: space-between;
-  align-items: center; margin-bottom: .5rem; }
-.meta-source-name { font-weight: 700; font-size: .85rem; text-transform: uppercase;
-  letter-spacing: .06em; color: var(--accent2); }
-.meta-synopsis { font-size: .82rem; color: var(--muted); line-height: 1.55; }
-.meta-field { font-size: .8rem; margin-top: .3rem; }
-.meta-field span { color: var(--muted); }
-.meta-fetch-form { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.meta-fetch-form select { padding: .4rem .65rem; background: var(--surface2);
-  border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: .84rem; }
-.meta-fetch-form input { flex: 1; min-width: 150px; padding: .4rem .65rem;
-  background: var(--surface2); border: 1px solid var(--border); border-radius: 7px;
-  color: var(--text); font-size: .84rem; }
+.meta-source { margin-bottom:.85rem; background:var(--surface2); border-radius:8px;
+  padding:.65rem .9rem; border:1px solid transparent; cursor:pointer; transition:border-color .12s; }
+.meta-source:hover { border-color:rgba(123,97,255,.4); }
+.meta-source.selected { border-color:var(--accent); }
+.meta-source.pinned   { border-color:rgba(167,139,250,.5); background:rgba(123,97,255,.07); }
+.meta-source-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:.4rem; }
+.meta-source-name { font-weight:700; font-size:.82rem; text-transform:uppercase;
+  letter-spacing:.06em; color:var(--accent2); }
+.meta-synopsis { font-size:.8rem; color:var(--muted); line-height:1.5; }
+.meta-field { font-size:.78rem; margin-top:.25rem; }
+.meta-field span { color:var(--muted); }
+.meta-fetch-row { display:flex; gap:.4rem; margin-bottom:.85rem; flex-wrap:wrap; }
+.meta-fetch-row select, .meta-fetch-row input { padding:.38rem .6rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.82rem; }
+.meta-fetch-row input { flex:1; min-width:130px; }
+.meta-apply-bar { background:var(--surface3); border-radius:7px; padding:.65rem .9rem;
+  margin-bottom:.85rem; display:none; }
+.meta-apply-bar.visible { display:block; }
+.meta-apply-row { display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.5rem; }
+.meta-check { display:flex; align-items:center; gap:.3rem; font-size:.78rem; }
+.meta-check input { accent-color:var(--accent); }
+
+/* Manual metadata editor */
+.field-group { margin-bottom:.75rem; }
+.field-group label { display:block; font-size:.75rem; color:var(--muted); margin-bottom:.25rem; }
+.field-group input, .field-group textarea { width:100%; padding:.38rem .6rem;
+  background:var(--surface2); border:1px solid var(--border); border-radius:7px;
+  color:var(--text); font-size:.83rem; outline:none; }
+.field-group input:focus, .field-group textarea:focus { border-color:var(--accent); }
+.field-group textarea { min-height:80px; resize:vertical; }
+.field-row-2 { display:flex; gap:.6rem; }
+.field-row-2 > * { flex:1; }
 
 /* Standardizer log */
-#std-log { background: #0a0a0e; border-radius: 8px; padding: .75rem;
-  font-family: monospace; font-size: .78rem; max-height: 220px; overflow-y: auto;
-  color: #7dff9e; line-height: 1.55; white-space: pre-wrap; }
-.std-controls { display: flex; gap: .75rem; align-items: center; margin-bottom: .75rem; }
-.toggle-label { display: flex; align-items: center; gap: .4rem; font-size: .84rem; }
+.std-log { background:#0a0a0e; border-radius:8px; padding:.65rem .75rem; font-family:monospace;
+  font-size:.76rem; max-height:200px; overflow-y:auto; color:#7dff9e;
+  line-height:1.55; white-space:pre-wrap; }
+.std-controls { display:flex; gap:.75rem; align-items:center; margin-bottom:.65rem; flex-wrap:wrap; }
+.toggle-label { display:flex; align-items:center; gap:.35rem; font-size:.82rem; cursor:pointer; }
+
+/* Move/rename panel */
+.move-preview { background:var(--surface2); border-radius:7px; padding:.55rem .8rem;
+  font-family:monospace; font-size:.78rem; color:var(--accent2); margin-top:.5rem; }
+.move-vars { display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.5rem; }
+.var-pill { padding:.15rem .45rem; background:rgba(123,97,255,.15); color:var(--accent2);
+  border-radius:5px; font-size:.72rem; font-family:monospace; cursor:pointer; }
+.var-pill:hover { background:rgba(123,97,255,.3); }
+
+/* Category selector */
+.cat-row { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.75rem; }
+.cat-opt { padding:.35rem .8rem; border-radius:20px; border:1.5px solid var(--border);
+  cursor:pointer; font-size:.8rem; font-weight:600; transition:all .12s; }
+.cat-opt:hover { border-color:var(--accent); }
+.cat-opt.sel-manga   { border-color:var(--accent2); color:var(--accent2); }
+.cat-opt.sel-comics  { border-color:var(--blue); color:var(--blue); }
+.cat-opt.sel-book    { border-color:var(--green); color:var(--green); }
+.cat-opt.sel-unknown { border-color:var(--muted); color:var(--muted); }
+
+/* Settings */
+.page-title { font-size:1.25rem; font-weight:700; margin-bottom:1.25rem;
+  display:flex; align-items:center; gap:.65rem; }
+.settings-grid { display:flex; flex-direction:column; gap:1.1rem; max-width:740px; }
+.settings-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.settings-card-header { padding:.8rem 1.2rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:.5rem; }
+.settings-card-title { font-weight:700; font-size:.92rem; }
+.settings-card-desc  { font-size:.75rem; color:var(--muted); margin-top:.08rem; }
+.settings-card-body  { padding:1rem 1.2rem; display:flex; flex-direction:column; gap:.8rem; }
+.field-row { display:flex; align-items:flex-start; gap:.9rem; }
+.field-row.centered { align-items:center; }
+.field-label { min-width:160px; font-size:.83rem; color:var(--muted); flex-shrink:0; }
+.field-label strong { display:block; color:var(--text); font-weight:600; margin-bottom:.08rem; }
+.field-label small { font-size:.7rem; }
+.field-control { flex:1; }
+.s-input  { width:100%; padding:.42rem .65rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.85rem; outline:none; }
+.s-input:focus  { border-color:var(--accent); }
+.s-input.mono   { font-family:monospace; font-size:.8rem; }
+.s-select { width:100%; padding:.42rem .65rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.85rem; cursor:pointer; }
+.s-number { width:80px; padding:.42rem .55rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:.85rem; outline:none; }
+.s-checkbox-row { display:flex; align-items:center; gap:.55rem; }
+.s-checkbox-row input[type=checkbox] { width:14px; height:14px; accent-color:var(--accent); }
+.s-checkbox-row label { font-size:.85rem; cursor:pointer; }
+.path-verify { margin-top:.4rem; padding:.45rem .7rem; border-radius:7px; font-size:.78rem; display:none; }
+.path-verify.ok  { background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:var(--green); display:block; }
+.path-verify.err { background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:var(--red); display:block; }
+.folder-browser { background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; margin-top:.4rem; max-height:200px; overflow-y:auto; display:none; }
+.folder-browser.open { display:block; }
+.fb-header { padding:.35rem .65rem; border-bottom:1px solid var(--border);
+  font-size:.7rem; color:var(--muted); display:flex; gap:.4rem; align-items:center; }
+.fb-up { background:none; border:none; cursor:pointer; color:var(--accent2); font-size:.78rem; }
+.fb-path { flex:1; font-family:monospace; font-size:.7rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fb-entry { padding:.3rem .7rem; cursor:pointer; font-size:.8rem; display:flex; align-items:center; gap:.4rem; }
+.fb-entry:hover { background:rgba(123,97,255,.1); }
+.rename-log, .debug-panel { background:#0a0a0e; border-radius:8px; padding:.65rem .75rem;
+  font-family:monospace; font-size:.76rem; max-height:240px; overflow-y:auto;
+  color:#7dff9e; line-height:1.55; white-space:pre-wrap; margin-top:.6rem; display:none; }
+.rename-log.visible, .debug-panel.visible { display:block; }
+.debug-panel { color:var(--text); }
+.debug-section { margin-bottom:.85rem; }
+.debug-section-title { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--accent2); margin-bottom:.35rem; font-weight:700; }
+.debug-row { display:flex; gap:.65rem; padding:.18rem 0; border-bottom:1px solid rgba(255,255,255,.04); }
+.debug-key { color:var(--muted); min-width:170px; flex-shrink:0; font-size:.75rem; }
+.debug-val { color:var(--text); word-break:break-all; font-size:.75rem; }
+.debug-val.ok   { color:var(--green); }
+.debug-val.err  { color:var(--red); }
+.debug-val.warn { color:var(--amber); }
+.save-bar { display:flex; gap:.65rem; align-items:center; padding-top:.5rem;
+  border-top:1px solid var(--border); margin-top:.4rem; }
+.save-status { font-size:.78rem; color:var(--muted); flex:1; }
+.save-status.saved { color:var(--green); }
 
 /* Toast */
-#toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 9px; padding: .7rem 1.1rem;
-  font-size: .85rem; z-index: 200; opacity: 0; transform: translateY(10px);
-  transition: all .2s; pointer-events: none; max-width: 320px; }
-#toast.show { opacity: 1; transform: none; }
-#toast.ok  { border-color: var(--green); }
-#toast.err { border-color: var(--red);   }
+#toast { position:fixed; bottom:1.5rem; right:1.5rem; background:var(--surface);
+  border:1px solid var(--border); border-radius:9px; padding:.65rem 1rem;
+  font-size:.83rem; z-index:200; opacity:0; transform:translateY(8px);
+  transition:all .2s; pointer-events:none; max-width:300px; }
+#toast.show { opacity:1; transform:none; }
+#toast.ok   { border-color:var(--green); }
+#toast.err  { border-color:var(--red); }
 
-/* Empty state */
-.empty { display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 4rem 1rem; color: var(--muted); gap: .75rem; }
-.empty-icon { font-size: 3rem; }
-.empty-text { font-size: 1rem; }
+.empty { display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:4rem 1rem; color:var(--muted); gap:.65rem; }
+.empty-icon { font-size:2.8rem; }
 </style>
 </head>
 <body>
 
-<!-- ── Sidebar ────────────────────────────────────────────────── -->
 <nav id="sidebar">
   <div class="logo">📚 Collection<span>manga · comics · ebooks</span></div>
-
   <div class="nav-section">Browse</div>
-  <div class="nav-item active" data-view="all" onclick="setView('all')">
-    <span class="nav-icon">🏠</span> All books
-  </div>
-  <div class="nav-item" data-view="manga" onclick="setView('manga')">
-    <span class="nav-icon">📖</span> Manga
-  </div>
-  <div class="nav-item" data-view="comics" onclick="setView('comics')">
-    <span class="nav-icon">💥</span> Comics
-  </div>
-  <div class="nav-item" data-view="ebooks" onclick="setView('ebooks')">
-    <span class="nav-icon">📕</span> Ebooks
-  </div>
-
+  <div class="nav-item active" data-view="all"     onclick="setView('all')">    <span class="nav-icon">🏠</span> All books</div>
+  <div class="nav-item"        data-view="series"  onclick="setView('series')"> <span class="nav-icon">📚</span> By series</div>
+  <div class="nav-item"        data-view="manga"   onclick="setView('manga')">  <span class="nav-icon">📖</span> Manga</div>
+  <div class="nav-item"        data-view="comics"  onclick="setView('comics')"> <span class="nav-icon">💥</span> Comics</div>
+  <div class="nav-item"        data-view="books"   onclick="setView('books')">  <span class="nav-icon">📕</span> Books</div>
   <div class="nav-section">Reading</div>
-  <div class="nav-item" data-view="reading" onclick="setView('reading')">
-    <span class="nav-icon">⏳</span> In progress
-  </div>
-  <div class="nav-item" data-view="unread" onclick="setView('unread')">
-    <span class="nav-icon">🔖</span> To read
-  </div>
-  <div class="nav-item" data-view="read" onclick="setView('read')">
-    <span class="nav-icon">✅</span> Finished
-  </div>
-
+  <div class="nav-item"        data-view="reading" onclick="setView('reading')"><span class="nav-icon">⏳</span> In progress</div>
+  <div class="nav-item"        data-view="unread"  onclick="setView('unread')"> <span class="nav-icon">🔖</span> To read</div>
+  <div class="nav-item"        data-view="read"    onclick="setView('read')">   <span class="nav-icon">✅</span> Finished</div>
   <div class="sidebar-bottom">
-    <button class="scan-btn" onclick="triggerScan()">⟳ Scan library</button>
+    <button class="scan-btn"     onclick="triggerScan()">⟳ Scan library</button>
+    <button class="settings-btn" onclick="showSettings()">⚙ Settings</button>
   </div>
 </nav>
 
-<!-- ── Main ───────────────────────────────────────────────────── -->
 <main id="main">
-  <!-- Stats bar -->
-  <div id="stats-bar">
-    <div class="stat-card">
-      <div class="stat-label">Total</div>
-      <div class="stat-value accent" id="stat-total">–</div>
+  <!-- ── Library page ── -->
+  <div id="library-page">
+    <div id="stats-bar">
+      <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value accent" id="stat-total">–</div></div>
+      <div class="stat-card"><div class="stat-label">Reading</div><div class="stat-value amber" id="stat-reading">–</div></div>
+      <div class="stat-card"><div class="stat-label">Finished</div><div class="stat-value green" id="stat-read">–</div></div>
+      <div class="stat-card"><div class="stat-label">To read</div><div class="stat-value" id="stat-unread">–</div></div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Reading</div>
-      <div class="stat-value amber" id="stat-reading">–</div>
+    <div id="toolbar">
+      <input id="search-input" type="search" placeholder="Search title or series…" oninput="debounceSearch()"/>
+      <select class="filter-select" id="filter-type" onchange="loadBooks()">
+        <option value="">All formats</option>
+        <option value="cbz">CBZ</option><option value="cbr">CBR</option>
+        <option value="epub">EPUB</option><option value="pdf">PDF</option>
+        <option value="mobi">MOBI</option><option value="azw3">AZW3</option>
+      </select>
+      <select class="filter-select" id="filter-sort" onchange="loadBooks()">
+        <option value="title">Title</option><option value="series">Series</option>
+        <option value="date_added">Added</option><option value="volume">Volume</option>
+      </select>
+      <span id="result-count"></span>
+      <div class="view-toggle">
+        <button class="view-btn active" id="vbtn-grid"  onclick="switchLayout('grid')" title="Grid">⊞</button>
+        <button class="view-btn"        id="vbtn-list"  onclick="switchLayout('list')" title="List">☰</button>
+        <button class="view-btn"        id="vbtn-table" onclick="switchLayout('table')" title="Table">⊟</button>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Finished</div>
-      <div class="stat-value green" id="stat-read">–</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">To read</div>
-      <div class="stat-value" id="stat-unread">–</div>
-    </div>
+    <div id="book-grid"></div>
+    <div id="book-list"       style="display:none"></div>
+    <div id="book-table-wrap" style="display:none"><table id="book-table"><thead><tr>
+      <th></th><th onclick="sortBy('title')"  style="cursor:pointer">Title</th>
+      <th onclick="sortBy('series')" style="cursor:pointer">Series</th>
+      <th>Vol</th><th>Format</th><th>Category</th><th>Status</th>
+    </tr></thead><tbody id="book-tbody"></tbody></table></div>
+    <div id="series-grid"     style="display:none"></div>
   </div>
 
-  <!-- Toolbar -->
-  <div id="toolbar">
-    <input id="search-input" type="search" placeholder="Search title or series…"
-           oninput="debounceSearch()" />
-    <select class="filter-select" id="filter-type" onchange="loadBooks()">
-      <option value="">All formats</option>
-      <option value="cbz">CBZ</option>
-      <option value="cbr">CBR</option>
-      <option value="epub">EPUB</option>
-      <option value="pdf">PDF</option>
-      <option value="mobi">MOBI</option>
-      <option value="azw3">AZW3</option>
-    </select>
-    <select class="filter-select" id="filter-sort" onchange="loadBooks()">
-      <option value="title">Sort: Title</option>
-      <option value="series">Sort: Series</option>
-      <option value="date_added">Sort: Date added</option>
-      <option value="volume">Sort: Volume</option>
-    </select>
-    <span id="result-count"></span>
-    <div class="view-toggle">
-      <button class="view-btn active" id="vbtn-grid" onclick="switchLayout('grid')">⊞</button>
-      <button class="view-btn"        id="vbtn-list" onclick="switchLayout('list')">☰</button>
+  <!-- ── Settings page ── -->
+  <div id="settings-page">
+    <div class="page-title"><span>⚙</span> Settings
+      <button class="btn btn-ghost" style="margin-left:auto;font-size:.78rem" onclick="showLibrary()">← Back</button>
+    </div>
+    <div class="settings-grid">
+
+      <div class="settings-card">
+        <div class="settings-card-header"><span>📁</span><div>
+          <div class="settings-card-title">Library</div>
+          <div class="settings-card-desc">Folder containing your manga, comics and ebooks</div>
+        </div></div>
+        <div class="settings-card-body">
+          <div class="field-row">
+            <div class="field-label"><strong>Library path</strong><small>Absolute path on disk</small></div>
+            <div class="field-control">
+              <div style="display:flex;gap:.4rem">
+                <input class="s-input mono" id="cfg-library-path" placeholder="/path/to/manga" oninput="clearPathVerify()">
+                <button class="btn btn-ghost" onclick="toggleBrowser()" style="white-space:nowrap">Browse…</button>
+                <button class="btn btn-primary" onclick="verifyPath()" style="white-space:nowrap">Verify</button>
+              </div>
+              <div class="folder-browser" id="folder-browser">
+                <div class="fb-header"><button class="fb-up" onclick="fbUp()">↑ Up</button><span class="fb-path" id="fb-path"></span></div>
+                <div id="fb-entries"></div>
+              </div>
+              <div class="path-verify" id="path-verify"></div>
+            </div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"><strong>Scan on startup</strong></div>
+            <div class="field-control"><div class="s-checkbox-row">
+              <input type="checkbox" id="cfg-scan-startup">
+              <label for="cfg-scan-startup">Auto-scan when server starts</label>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header"><span>🔧</span><div>
+          <div class="settings-card-title">CBZ Standardizer defaults</div>
+          <div class="settings-card-desc">Default parameters used in the book panel</div>
+        </div></div>
+        <div class="settings-card-body">
+          <div class="field-row centered">
+            <div class="field-label"><strong>Convert to WebP</strong><small>Requires Pillow</small></div>
+            <div class="field-control"><div class="s-checkbox-row">
+              <input type="checkbox" id="cfg-std-webp"><label for="cfg-std-webp">Enable WebP conversion</label>
+            </div></div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"><strong>WebP quality</strong><small>0=smallest · 100=lossless</small></div>
+            <div class="field-control" style="display:flex;align-items:center;gap:.6rem">
+              <input class="s-number" type="number" id="cfg-std-quality" min="0" max="100">
+              <span style="font-size:.78rem;color:var(--muted)">/100</span>
+            </div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"><strong>Delete original</strong><small>Remove source CBZ after standardize</small></div>
+            <div class="field-control"><div class="s-checkbox-row">
+              <input type="checkbox" id="cfg-std-delete"><label for="cfg-std-delete">Delete original file</label>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header"><span>✏️</span><div>
+          <div class="settings-card-title">Batch rename</div>
+          <div class="settings-card-desc">Rename + move files using a pattern. Variables: {series} {title} {volume:02d} {category} {type}</div>
+        </div></div>
+        <div class="settings-card-body">
+          <div class="field-row centered">
+            <div class="field-label"><strong>Pattern</strong></div>
+            <div class="field-control">
+              <input class="s-input mono" id="cfg-rename-pattern" value="{series} - T{volume:02d}">
+              <div class="move-vars" style="margin-top:.4rem">
+                <span class="var-pill" onclick="insertVar('{series}')    ">{series}</span>
+                <span class="var-pill" onclick="insertVar('{title}')     ">{title}</span>
+                <span class="var-pill" onclick="insertVar('{volume:02d}')">{volume:02d}</span>
+                <span class="var-pill" onclick="insertVar('{category}')  ">{category}</span>
+              </div>
+            </div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"><strong>Scope</strong></div>
+            <div class="field-control">
+              <select class="s-select" id="cfg-rename-scope" style="width:auto">
+                <option value="cbz">CBZ / CBR only</option><option value="all">All formats</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"></div>
+            <div class="field-control" style="display:flex;gap:.6rem;flex-wrap:wrap">
+              <button class="btn btn-ghost"    onclick="runRename(true)">👁 Preview</button>
+              <button class="btn btn-warning"  onclick="runRename(false)" id="btn-rename-apply">✏️ Apply rename</button>
+            </div>
+          </div>
+          <div class="rename-log" id="rename-log"></div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header"><span>🌐</span><div>
+          <div class="settings-card-title">Metadata sources</div>
+          <div class="settings-card-desc">API keys, enabled providers, storage mode</div>
+        </div></div>
+        <div class="settings-card-body">
+
+          <!-- Storage mode -->
+          <div class="field-row centered">
+            <div class="field-label"><strong>Storage mode</strong>
+              <small>Where to save metadata</small>
+            </div>
+            <div class="field-control">
+              <select class="s-select" id="cfg-meta-storage" style="width:auto">
+                <option value="db">Database only (SQLite)</option>
+                <option value="file">Sidecar JSON files only</option>
+                <option value="both">Both (DB + JSON files)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Sidecar folder -->
+          <div class="field-row centered">
+            <div class="field-label"><strong>Sidecar folder</strong>
+              <small>Only used when mode includes "file"</small>
+            </div>
+            <div class="field-control">
+              <input class="s-input mono" id="cfg-meta-files-dir" placeholder="data/metadata">
+            </div>
+          </div>
+
+          <!-- Providers -->
+          <div class="field-row">
+            <div class="field-label"><strong>Enabled providers</strong></div>
+            <div class="field-control" id="cfg-providers-list"
+              style="display:flex;flex-direction:column;gap:.4rem">
+              <!-- populated by JS -->
+            </div>
+          </div>
+
+          <!-- API Keys -->
+          <div class="field-row centered">
+            <div class="field-label"><strong>ComicVine API key</strong>
+              <small><a href="https://comicvine.gamespot.com/api/" target="_blank"
+                style="color:var(--accent2)">Get free key ↗</a></small>
+            </div>
+            <div class="field-control">
+              <input class="s-input mono" type="password" id="cfg-comicvine-key"
+                     placeholder="ComicVine API key">
+            </div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"><strong>Hardcover API key</strong>
+              <small><a href="https://hardcover.app/account/api" target="_blank"
+                style="color:var(--accent2)">Get free key ↗</a></small>
+            </div>
+            <div class="field-control">
+              <input class="s-input mono" type="password" id="cfg-hardcover-key"
+                     placeholder="Hardcover API key">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header"><span>🐛</span><div>
+          <div class="settings-card-title">Debug</div>
+          <div class="settings-card-desc">Restart required to toggle debug mode</div>
+        </div></div>
+        <div class="settings-card-body">
+          <div class="field-row centered">
+            <div class="field-label"><strong>Debug mode</strong></div>
+            <div class="field-control"><div class="s-checkbox-row">
+              <input type="checkbox" id="cfg-debug"><label for="cfg-debug">Enable /debug endpoint and /docs</label>
+            </div></div>
+          </div>
+          <div class="field-row centered">
+            <div class="field-label"></div>
+            <div class="field-control">
+              <button class="btn btn-ghost" onclick="loadDebugInfo()" id="btn-debug-load">📊 Load diagnostics</button>
+            </div>
+          </div>
+          <div class="debug-panel" id="debug-panel"></div>
+        </div>
+      </div>
+
+      <div class="save-bar">
+        <span class="save-status" id="save-status"></span>
+        <button class="btn btn-primary" onclick="saveSettings()">💾 Save settings</button>
+      </div>
     </div>
   </div>
-
-  <!-- Book containers -->
-  <div id="book-grid"></div>
-  <div id="book-list" style="display:none"></div>
 </main>
 
-<!-- ── Modal ──────────────────────────────────────────────────── -->
+<!-- ── Book modal ── -->
 <div id="modal-overlay" onclick="closeModalOnBg(event)">
-  <div id="modal">
-    <div class="modal-header">
-      <div id="modal-cover-wrap"></div>
-      <div class="modal-title-block">
-        <div class="modal-title" id="modal-title"></div>
-        <div class="modal-series" id="modal-series"></div>
-        <div class="modal-badges" id="modal-badges"></div>
-        <div class="modal-path" id="modal-path"></div>
-        <div class="modal-actions">
-          <button class="btn btn-ghost" onclick="closeModal()">✕ Close</button>
-          <button class="btn btn-danger" id="btn-delete" onclick="deleteBook()">🗑 Delete</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <!-- Tabs -->
-      <div class="modal-tabs">
-        <div class="modal-tab active" onclick="switchTab('status')">Reading</div>
-        <div class="modal-tab" onclick="switchTab('tags')">Tags</div>
-        <div class="modal-tab" onclick="switchTab('metadata')">Metadata</div>
-        <div class="modal-tab" onclick="switchTab('standardize')">Standardize</div>
-      </div>
-
-      <!-- Tab: Reading status -->
-      <div class="modal-panel active" id="tab-status">
-        <div class="status-row" id="status-opts"></div>
-        <div style="font-size:.8rem;color:var(--muted);margin-bottom:.5rem">
-          Page / progress (optional)
-        </div>
-        <input type="number" id="progress-input" min="0" placeholder="0"
-          style="width:100px;padding:.4rem .6rem;background:var(--surface2);
-          border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.85rem">
-        <button class="btn btn-primary" style="margin-left:.5rem"
-          onclick="saveStatus()">Save</button>
-      </div>
-
-      <!-- Tab: Tags -->
-      <div class="modal-panel" id="tab-tags">
-        <div class="tag-editor" id="tag-editor"></div>
-        <div class="tag-input-row">
-          <input class="tag-input" id="tag-input" placeholder="Add tag…"
-            onkeydown="if(event.key==='Enter') addTag()">
-          <button class="btn btn-ghost" onclick="addTag()">Add</button>
-        </div>
-      </div>
-
-      <!-- Tab: Metadata -->
-      <div class="modal-panel" id="tab-metadata">
-        <div class="meta-fetch-form">
-          <select id="meta-source">
-            <option value="anilist">AniList</option>
-            <option value="comicvine">ComicVine</option>
-            <option value="googlebooks">Google Books</option>
-          </select>
-          <input id="meta-query" placeholder="Search query…">
-          <button class="btn btn-primary" onclick="fetchMeta()">Fetch</button>
-        </div>
-        <div id="meta-results"></div>
-      </div>
-
-      <!-- Tab: Standardize (CBZ only) -->
-      <div class="modal-panel" id="tab-standardize">
-        <div class="std-controls">
-          <label class="toggle-label">
-            <input type="checkbox" id="std-webp"> Convert to WebP
-          </label>
-          <label class="toggle-label" style="margin-left:.5rem">
-            Quality
-            <input type="number" id="std-quality" value="85" min="0" max="100"
-              style="width:55px;padding:.25rem .4rem;background:var(--surface2);
-              border:1px solid var(--border);border-radius:5px;color:var(--text);
-              font-size:.83rem;margin-left:.3rem">
-          </label>
-          <button class="btn btn-warning" onclick="runStandardize()" id="btn-std">
-            ▶ Run
-          </button>
-        </div>
-        <div id="std-log">Ready.</div>
+<div id="modal">
+  <div class="modal-header">
+    <div id="modal-cover-wrap"></div>
+    <div class="modal-title-block">
+      <div class="modal-title"  id="modal-title"></div>
+      <div class="modal-series" id="modal-series"></div>
+      <div class="modal-badges" id="modal-badges"></div>
+      <div class="modal-path"   id="modal-path"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost"  onclick="closeModal()">✕ Close</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteBook()">🗑 Delete</button>
       </div>
     </div>
   </div>
+  <div class="modal-body">
+    <div class="modal-tabs">
+      <div class="modal-tab active" onclick="switchTab('info')">Info</div>
+      <div class="modal-tab"        onclick="switchTab('reading')">Reading</div>
+      <div class="modal-tab"        onclick="switchTab('tags')">Tags</div>
+      <div class="modal-tab"        onclick="switchTab('metadata')">Metadata</div>
+      <div class="modal-tab"        onclick="switchTab('standardize')" id="std-tab">Standardize</div>
+      <div class="modal-tab"        onclick="switchTab('move')">Move</div>
+    </div>
+
+    <!-- Tab: Info -->
+    <div class="modal-panel active" id="tab-info">
+      <div class="field-group"><label>Title</label>
+        <input type="text" id="info-title" placeholder="Title">
+      </div>
+      <div class="field-row-2">
+        <div class="field-group"><label>Series</label>
+          <input type="text" id="info-series" placeholder="Series name">
+        </div>
+        <div class="field-group"><label>Volume</label>
+          <input type="number" id="info-volume" min="0" placeholder="1">
+        </div>
+      </div>
+      <div class="field-group"><label>Category</label>
+        <div class="cat-row" id="cat-opts"></div>
+      </div>
+      <div class="field-group"><label>Format</label>
+        <select id="info-type" class="s-select" style="width:auto">
+          <option value="cbz">CBZ</option><option value="cbr">CBR</option>
+          <option value="epub">EPUB</option><option value="pdf">PDF</option>
+          <option value="mobi">MOBI</option><option value="azw3">AZW3</option>
+          <option value="unknown">Unknown</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="saveInfo()">Save changes</button>
+
+      <!-- Read-only metadata from best cache row -->
+      <div id="info-meta-section" style="margin-top:1.1rem;padding-top:1rem;
+           border-top:1px solid var(--border);display:none">
+        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;
+             color:var(--muted);margin-bottom:.6rem;font-weight:700">Saved metadata</div>
+        <div id="info-meta-content"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Reading -->
+    <div class="modal-panel" id="tab-reading">
+      <div class="status-row" id="status-opts"></div>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:.4rem">Page / progress (optional)</div>
+      <input type="number" id="progress-input" min="0" placeholder="0"
+        style="width:95px;padding:.38rem .55rem;background:var(--surface2);
+        border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.83rem">
+      <button class="btn btn-primary" style="margin-left:.4rem" onclick="saveStatus()">Save</button>
+    </div>
+
+    <!-- Tab: Tags -->
+    <div class="modal-panel" id="tab-tags">
+      <div class="tag-editor" id="tag-editor"></div>
+      <div class="tag-input-row">
+        <input class="tag-input" id="tag-input" placeholder="Add tag…" onkeydown="if(event.key==='Enter') addTag()">
+        <button class="btn btn-ghost" onclick="addTag()">Add</button>
+      </div>
+    </div>
+
+    <!-- Tab: Metadata -->
+    <div class="modal-panel" id="tab-metadata">
+
+      <!-- Search bar -->
+      <div style="display:flex;flex-direction:column;gap:.35rem;margin-bottom:.75rem">
+        <div style="display:flex;gap:.35rem;flex-wrap:wrap;align-items:center">
+          <select id="meta-source" style="padding:.38rem .55rem;background:var(--surface2);
+            border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.82rem">
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="fetchMeta()">Search</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteAllMeta()" title="Delete all metadata for this book"
+            style="margin-left:auto;color:var(--red)">🗑 Reset all</button>
+        </div>
+        <div style="display:flex;gap:.35rem;flex-wrap:wrap">
+          <input id="meta-query-title" placeholder="Title…"
+            style="flex:2;min-width:110px;padding:.38rem .55rem;background:var(--surface2);
+            border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.82rem"
+            onkeydown="if(event.key==='Enter') fetchMeta()">
+          <input id="meta-query-author" placeholder="Author (optional)…"
+            style="flex:1;min-width:90px;padding:.38rem .55rem;background:var(--surface2);
+            border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.82rem"
+            onkeydown="if(event.key==='Enter') fetchMeta()">
+        </div>
+      </div>
+
+      <!-- Scrollable results area -->
+      <div id="meta-results" style="max-height:320px;overflow-y:auto;padding-right:2px"></div>
+
+      <!-- Pinned / apply bar — appears when a result is selected -->
+      <div class="meta-apply-bar" id="meta-apply-bar">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem">
+          <span style="font-size:.75rem;font-weight:700;color:var(--accent2)">Apply to book record:</span>
+        </div>
+        <div class="meta-apply-row">
+          <label class="meta-check"><input type="checkbox" id="apply-title">    Title</label>
+          <label class="meta-check"><input type="checkbox" id="apply-series">   Series</label>
+          <label class="meta-check"><input type="checkbox" id="apply-volume">   Volume</label>
+          <label class="meta-check"><input type="checkbox" id="apply-authors">  Authors</label>
+          <label class="meta-check"><input type="checkbox" id="apply-synopsis"> Synopsis</label>
+          <label class="meta-check"><input type="checkbox" id="apply-genres">   Genres</label>
+          <label class="meta-check"><input type="checkbox" id="apply-year">     Year</label>
+          <label class="meta-check"><input type="checkbox" id="apply-publisher">Publisher</label>
+        </div>
+        <div style="display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap">
+          <button class="btn btn-success btn-sm" onclick="applySelectedMeta()">✓ Apply fields</button>
+          <button class="btn btn-primary btn-sm" onclick="pinSelectedMeta()">📌 Pin as best</button>
+          <button class="btn btn-ghost  btn-sm" onclick="deleteSelectedMeta()"
+            style="color:var(--red)">🗑 Delete</button>
+        </div>
+      </div>
+
+      <!-- Manual edit — always visible at bottom -->
+      <details id="manual-details" style="margin-top:.85rem">
+        <summary style="cursor:pointer;font-size:.82rem;color:var(--accent2);padding:.25rem 0;
+          font-weight:600">✏️ Manual metadata</summary>
+        <div style="margin-top:.65rem;display:flex;flex-direction:column;gap:.5rem">
+          <div class="field-group"><label>Title</label>
+            <input type="text" id="manual-title" placeholder="Title">
+          </div>
+          <div class="field-row-2">
+            <div class="field-group"><label>Series</label>
+              <input type="text" id="manual-series" placeholder="Series name">
+            </div>
+            <div class="field-group"><label>Volume</label>
+              <input type="number" id="manual-volume" min="0" placeholder="1">
+            </div>
+          </div>
+          <div class="field-group"><label>Synopsis</label>
+            <textarea id="manual-synopsis" placeholder="Synopsis…"></textarea>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group"><label>Authors (comma-separated)</label>
+              <input type="text" id="manual-authors" placeholder="Author 1, Author 2">
+            </div>
+            <div class="field-group"><label>Artists (comma-separated)</label>
+              <input type="text" id="manual-artists" placeholder="Artist 1">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group"><label>Genres</label>
+              <input type="text" id="manual-genres" placeholder="Action, Adventure">
+            </div>
+            <div class="field-group"><label>Tags</label>
+              <input type="text" id="manual-tags" placeholder="tag1, tag2">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group"><label>Publisher</label>
+              <input type="text" id="manual-publisher">
+            </div>
+            <div class="field-group"><label>Year</label>
+              <input type="number" id="manual-year" min="1900" max="2100">
+            </div>
+          </div>
+          <div class="field-row-2">
+            <div class="field-group"><label>ISBN</label>
+              <input type="text" id="manual-isbn" placeholder="ISBN-10">
+            </div>
+            <div class="field-group"><label>ISBN-13</label>
+              <input type="text" id="manual-isbn13" placeholder="ISBN-13">
+            </div>
+          </div>
+          <div class="field-group"><label>Score (0–10)</label>
+            <input type="number" id="manual-score" min="0" max="10" step="0.1" style="width:80px">
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <button class="btn btn-primary btn-sm" onclick="saveManualMeta()">💾 Save</button>
+            <button class="btn btn-success btn-sm" onclick="saveManualMeta(true)">💾 Save & pin</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Tab: Standardize -->
+    <div class="modal-panel" id="tab-standardize">
+      <div class="std-controls">
+        <label class="toggle-label"><input type="checkbox" id="std-webp"> Convert to WebP</label>
+        <label class="toggle-label" style="margin-left:.3rem">Quality
+          <input type="number" id="std-quality" value="85" min="0" max="100"
+            style="width:52px;padding:.22rem .38rem;background:var(--surface2);
+            border:1px solid var(--border);border-radius:5px;color:var(--text);
+            font-size:.8rem;margin-left:.25rem">
+        </label>
+        <label class="toggle-label" style="margin-left:.3rem">
+          <input type="checkbox" id="std-delete"> Delete original
+        </label>
+        <button class="btn btn-warning btn-sm" onclick="runStandardize()" id="btn-std">▶ Run</button>
+      </div>
+      <div class="std-log" id="std-log">Ready.</div>
+    </div>
+
+    <!-- Tab: Move/Rename -->
+    <div class="modal-panel" id="tab-move">
+      <div class="field-group">
+        <label>Path pattern <span style="color:var(--muted);font-size:.72rem">(relative to library root)</span></label>
+        <input type="text" id="move-pattern" value="{series}/{title}" oninput="updateMovePreview()">
+        <div class="move-vars" style="margin-top:.4rem">
+          <span class="var-pill" onclick="insertMoveVar('{series}')    ">{series}</span>
+          <span class="var-pill" onclick="insertMoveVar('{title}')     ">{title}</span>
+          <span class="var-pill" onclick="insertMoveVar('{volume:02d}')">{volume:02d}</span>
+          <span class="var-pill" onclick="insertMoveVar('{category}')  ">{category}</span>
+          <span class="var-pill" onclick="insertMoveVar('{type}')      ">{type}</span>
+        </div>
+      </div>
+      <div class="move-preview" id="move-preview">Preview will appear here</div>
+      <div style="margin-top:.75rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+        <label class="toggle-label">
+          <input type="checkbox" id="move-dry" checked> Dry run (preview only)
+        </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="move-delete"> Delete original after move
+        </label>
+        <button class="btn btn-primary btn-sm" onclick="moveBook()" id="btn-move">▶ Run</button>
+      </div>
+      <div id="move-result" style="margin-top:.5rem;font-family:monospace;font-size:.78rem;
+        min-height:1.4em;color:var(--muted)"></div>
+    </div>
+
+  </div>
+</div>
 </div>
 
-<!-- Toast -->
 <div id="toast"></div>
-
 <script src="/static/app.js"></script>
 </body>
 </html>

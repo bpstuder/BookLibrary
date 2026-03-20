@@ -29,6 +29,8 @@ Optional dependencies:
   pip install Pillow       # required only for --webp
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import re

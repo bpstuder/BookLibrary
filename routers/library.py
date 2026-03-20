@@ -2,21 +2,26 @@
 routers/library.py — Library scan and CBZ standardizer (SSE streaming).
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from db.models import ScanResult
+import db.config as cfg
+from db.models import ScanResult, StandardizeRequest
 from services.scanner import scan_library
 from services.standardizer import standardize_book
 
 router = APIRouter(tags=["library"])
 
-LIBRARY_PATH = Path(os.getenv("LIBRARY_PATH", "./library"))
+
+def _library_path() -> Path:
+    """Always read from live config (can be changed via Settings page)."""
+    return Path(cfg.get("library_path", "./library")).expanduser().resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -25,42 +30,37 @@ LIBRARY_PATH = Path(os.getenv("LIBRARY_PATH", "./library"))
 
 @router.post("/scan", response_model=ScanResult)
 def trigger_scan():
-    """Scan LIBRARY_PATH and sync the database."""
-    if not LIBRARY_PATH.exists():
+    library = _library_path()
+    if not library.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Library path does not exist: {LIBRARY_PATH}",
+            detail=f"Library path does not exist: {library}",
         )
-    return scan_library(LIBRARY_PATH)
+    return scan_library(library)
 
 
 # ---------------------------------------------------------------------------
 # CBZ Standardizer — SSE stream
 # ---------------------------------------------------------------------------
 
-class StandardizeRequest(BaseModel):
-    webp: bool = False
-    webp_quality: int = 85
-
-
 @router.post("/books/{book_id}/standardize")
 def standardize(book_id: int, body: StandardizeRequest):
     """
     Stream CBZ standardization logs via Server-Sent Events.
-    Final event is either 'done' or 'error'.
+    Supports delete_old to remove the original file after processing.
+    Final event: 'done' or 'error'.
     """
 
     async def event_stream():
         loop = asyncio.get_event_loop()
 
         def _run():
-            return list(
-                standardize_book(
-                    book_id=book_id,
-                    webp=body.webp,
-                    webp_quality=body.webp_quality,
-                )
-            )
+            return list(standardize_book(
+                book_id=book_id,
+                webp=body.webp,
+                webp_quality=body.webp_quality,
+                delete_old=body.delete_old,
+            ))
 
         lines = await loop.run_in_executor(None, _run)
 

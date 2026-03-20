@@ -1,12 +1,14 @@
 """
-services/standardizer.py — Wrap cbz_standardize.process_cbz for use in FastAPI.
+services/standardizer.py — Wrap cbz_standardize.process_cbz for FastAPI.
 
 Yields log lines as strings (for SSE streaming).
-After success, re-scans the affected book in the DB.
+After success: updates the DB, refreshes cover, optionally deletes original.
 """
 
-import sys
+from __future__ import annotations
+
 import io
+import sys
 from pathlib import Path
 from typing import Generator
 
@@ -16,13 +18,13 @@ from services.covers import extract_cover
 
 
 def standardize_book(
-    book_id: int,
-    webp: bool = False,
+    book_id:     int,
+    webp:        bool = False,
     webp_quality: int = 85,
+    delete_old:  bool = False,
 ) -> Generator[str, None, None]:
     """
-    Generator: yields log lines while processing, then a final 'DONE:<path>'
-    or 'ERROR:<message>' sentinel line.
+    Generator: yields log lines, then 'DONE:<path>' or 'ERROR:<message>'.
     """
     with get_conn() as conn:
         row = conn.execute(
@@ -39,7 +41,7 @@ def standardize_book(
         return
 
     if cbz_path.suffix.lower() not in (".cbz", ".cbr"):
-        yield f"ERROR:Standardizer only supports CBZ/CBR files, got {cbz_path.suffix}"
+        yield f"ERROR:Standardizer only supports CBZ/CBR (got {cbz_path.suffix})"
         return
 
     log_lines: list[str] = []
@@ -48,14 +50,13 @@ def standardize_book(
         def write(self, s: str):
             if s.strip():
                 log_lines.append(s.rstrip())
+        def flush(self): pass
 
     real_stdout = sys.stdout
-    sys.stdout = _Capture()
+    sys.stdout  = _Capture()
 
-    # Non-interactive mode: resolve name from file / metadata only
-    # (no stdin prompt possible in a web context)
     def _no_prompt(prompt: str) -> str:
-        log_lines.append(f"  [warn]    Interactive prompt skipped in web mode: {prompt}")
+        log_lines.append(f"  [warn]    Skipping interactive prompt in web mode")
         return ""
 
     cbz._ask = _no_prompt
@@ -73,19 +74,15 @@ def standardize_book(
         )
 
         sys.stdout = real_stdout
-
-        # Flush captured lines
         for line in log_lines:
             yield line
 
-        # Update DB: new path, cover, file size
+        # Update DB
+        new_size = output_path.stat().st_size if output_path.exists() else None
+        from services.scanner import _guess_metadata
+        title, series, volume = _guess_metadata(output_path)
+
         with get_conn() as conn:
-            new_size = output_path.stat().st_size if output_path.exists() else None
-
-            # Infer new title / series / volume from standardized filename
-            from services.scanner import _guess_metadata
-            title, series, volume = _guess_metadata(output_path)
-
             conn.execute(
                 """
                 UPDATE books
@@ -95,14 +92,20 @@ def standardize_book(
                 """,
                 (str(output_path), title, series, volume, new_size, book_id),
             )
-
-            # Refresh cover
             cover = extract_cover(output_path, book_id)
             if cover:
                 conn.execute(
                     "UPDATE books SET cover_path = ? WHERE id = ?",
                     (str(cover), book_id),
                 )
+
+        # Delete original if requested and different from output
+        if delete_old and output_path != cbz_path and cbz_path.exists():
+            try:
+                cbz_path.unlink()
+                yield f"  [delete]  Original file removed: {cbz_path.name}"
+            except Exception as e:
+                yield f"  [warn]    Could not delete original: {e}"
 
         yield f"DONE:{output_path}"
 
