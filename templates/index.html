@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manga Collection</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0f13;
+  --surface: #18181f;
+  --surface2: #22222c;
+  --border: #2e2e3a;
+  --text: #e2e2ec;
+  --muted: #7a7a90;
+  --accent: #7b61ff;
+  --accent2: #a78bfa;
+  --green: #22c55e;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --radius: 10px;
+  --sidebar: 240px;
+}
+
+body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
+  color: var(--text); min-height: 100vh; display: flex; font-size: 14px; }
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+#sidebar {
+  width: var(--sidebar); min-height: 100vh; background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  padding: 1.25rem 0; position: fixed; top: 0; left: 0; bottom: 0; z-index: 10;
+}
+.logo { padding: 0 1.25rem 1.25rem; font-size: 1.1rem; font-weight: 700;
+  color: var(--accent2); letter-spacing: .01em; border-bottom: 1px solid var(--border);
+  margin-bottom: .75rem; }
+.logo span { color: var(--muted); font-weight: 400; font-size: .8rem; display: block; }
+.nav-item { display: flex; align-items: center; gap: .6rem; padding: .55rem 1.25rem;
+  cursor: pointer; color: var(--muted); border-left: 3px solid transparent;
+  transition: all .15s; font-size: .9rem; }
+.nav-item:hover { color: var(--text); background: var(--surface2); }
+.nav-item.active { color: var(--accent2); border-left-color: var(--accent);
+  background: rgba(123,97,255,.08); }
+.nav-icon { font-size: 1rem; width: 18px; text-align: center; }
+.nav-section { padding: .5rem 1.25rem .2rem; font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; margin-top: .5rem; }
+.sidebar-bottom { margin-top: auto; padding: 1rem 1.25rem 0;
+  border-top: 1px solid var(--border); }
+.scan-btn { width: 100%; padding: .55rem; background: var(--accent);
+  color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: .88rem;
+  font-weight: 600; transition: opacity .15s; }
+.scan-btn:hover { opacity: .85; }
+
+/* ── Main content ─────────────────────────────────────────────── */
+#main { margin-left: var(--sidebar); flex: 1; padding: 1.5rem 2rem; min-height: 100vh; }
+
+/* ── Toolbar ──────────────────────────────────────────────────── */
+#toolbar { display: flex; gap: .75rem; align-items: center; margin-bottom: 1.5rem;
+  flex-wrap: wrap; }
+#search-input { flex: 1; min-width: 200px; padding: .5rem .75rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: .9rem; outline: none; }
+#search-input:focus { border-color: var(--accent); }
+.filter-select { padding: .5rem .75rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+  font-size: .88rem; cursor: pointer; outline: none; }
+.view-toggle { display: flex; gap: 2px; background: var(--surface2);
+  padding: 3px; border-radius: 8px; }
+.view-btn { padding: .3rem .55rem; border: none; background: none; cursor: pointer;
+  color: var(--muted); border-radius: 6px; font-size: .9rem; transition: all .12s; }
+.view-btn.active { background: var(--surface); color: var(--text); }
+#result-count { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+
+/* ── Stats bar ────────────────────────────────────────────────── */
+#stats-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.stat-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .75rem 1.25rem; flex: 1; min-width: 120px; }
+.stat-label { color: var(--muted); font-size: .75rem; margin-bottom: .25rem; }
+.stat-value { font-size: 1.4rem; font-weight: 700; color: var(--text); }
+.stat-value.accent { color: var(--accent2); }
+.stat-value.green  { color: var(--green);   }
+.stat-value.amber  { color: var(--amber);   }
+
+/* ── Grid view ───────────────────────────────────────────────── */
+#book-grid { display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+
+.book-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  transition: transform .12s, border-color .12s; position: relative; }
+.book-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+.book-cover { width: 100%; aspect-ratio: 2/3; object-fit: cover;
+  background: var(--surface2); display: block; }
+.book-cover-placeholder { width: 100%; aspect-ratio: 2/3; background: var(--surface2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2.5rem; color: var(--border); }
+.book-info { padding: .6rem .7rem; }
+.book-title { font-size: .78rem; font-weight: 600; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-series { font-size: .7rem; color: var(--muted); margin-top: .2rem; }
+.status-dot { position: absolute; top: .4rem; right: .4rem; width: 8px; height: 8px;
+  border-radius: 50%; border: 1.5px solid var(--surface); }
+.status-dot.unread  { background: var(--muted); }
+.status-dot.reading { background: var(--amber);  }
+.status-dot.read    { background: var(--green);  }
+
+/* ── List view ───────────────────────────────────────────────── */
+#book-list { display: flex; flex-direction: column; gap: .4rem; }
+.book-row { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; display: flex; align-items: center; gap: 1rem;
+  padding: .6rem .9rem; cursor: pointer; transition: border-color .12s; }
+.book-row:hover { border-color: var(--accent); }
+.book-row-thumb { width: 36px; height: 54px; object-fit: cover;
+  border-radius: 4px; background: var(--surface2); flex-shrink: 0; }
+.book-row-thumb-placeholder { width: 36px; height: 54px; background: var(--surface2);
+  border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; flex-shrink: 0; }
+.book-row-main { flex: 1; min-width: 0; }
+.book-row-title { font-weight: 600; font-size: .9rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-row-sub   { font-size: .78rem; color: var(--muted); margin-top: .15rem; }
+.book-row-meta  { display: flex; gap: .5rem; align-items: center; flex-shrink: 0; }
+.type-badge { padding: .15rem .5rem; border-radius: 20px; font-size: .7rem;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.type-cbz  { background: rgba(123,97,255,.2); color: var(--accent2); }
+.type-epub { background: rgba(34,197,94,.15); color: var(--green); }
+.type-pdf  { background: rgba(239,68,68,.15);  color: var(--red);  }
+.type-mobi { background: rgba(245,158,11,.15); color: var(--amber); }
+.type-cbr  { background: rgba(59,130,246,.15); color: var(--blue); }
+.status-badge { padding: .15rem .5rem; border-radius: 20px; font-size: .7rem;
+  font-weight: 600; }
+.status-badge.unread  { background: rgba(122,122,144,.15); color: var(--muted);  }
+.status-badge.reading { background: rgba(245,158,11,.15);  color: var(--amber); }
+.status-badge.read    { background: rgba(34,197,94,.15);   color: var(--green); }
+.tag-pill { padding: .1rem .45rem; background: var(--surface2); border-radius: 20px;
+  font-size: .7rem; color: var(--muted); }
+
+/* ── Modal ───────────────────────────────────────────────────── */
+#modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7);
+  z-index: 100; display: none; align-items: flex-start; justify-content: center;
+  overflow-y: auto; padding: 2rem 1rem; }
+#modal-overlay.open { display: flex; }
+#modal { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; width: 100%; max-width: 720px;
+  animation: slideUp .18s ease; }
+@keyframes slideUp { from { opacity:0; transform: translateY(20px); } }
+.modal-header { display: flex; gap: 1.5rem; padding: 1.5rem;
+  border-bottom: 1px solid var(--border); }
+.modal-cover { width: 110px; height: 165px; object-fit: cover; border-radius: 8px;
+  background: var(--surface2); flex-shrink: 0; }
+.modal-cover-placeholder { width: 110px; height: 165px; background: var(--surface2);
+  border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-size: 3rem; flex-shrink: 0; }
+.modal-title-block { flex: 1; }
+.modal-title { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
+.modal-series { color: var(--muted); margin-top: .3rem; font-size: .9rem; }
+.modal-badges { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
+.modal-path  { font-size: .72rem; color: var(--muted); margin-top: .5rem;
+  word-break: break-all; }
+.modal-actions { display: flex; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; }
+.btn { padding: .45rem .9rem; border-radius: 7px; border: none; cursor: pointer;
+  font-size: .85rem; font-weight: 600; transition: opacity .12s; }
+.btn:hover { opacity: .85; }
+.btn-primary { background: var(--accent);  color: #fff; }
+.btn-success { background: var(--green);   color: #fff; }
+.btn-warning { background: var(--amber);   color: #fff; }
+.btn-ghost   { background: var(--surface2); color: var(--text); }
+.btn-danger  { background: var(--red);     color: #fff; }
+
+/* Modal body */
+.modal-body { padding: 1.25rem 1.5rem; }
+.modal-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem; }
+.modal-tab { padding: .5rem 1rem; cursor: pointer; color: var(--muted); font-size: .88rem;
+  border-bottom: 2px solid transparent; transition: all .12s; }
+.modal-tab.active { color: var(--accent2); border-bottom-color: var(--accent); }
+.modal-panel { display: none; }
+.modal-panel.active { display: block; }
+
+/* Status selector */
+.status-row { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
+.status-opt { padding: .4rem .9rem; border-radius: 20px; border: 1.5px solid var(--border);
+  cursor: pointer; font-size: .82rem; font-weight: 600; transition: all .12s; }
+.status-opt:hover { border-color: var(--accent); }
+.status-opt.sel-unread  { border-color: var(--muted); color: var(--muted); }
+.status-opt.sel-reading { border-color: var(--amber); color: var(--amber); }
+.status-opt.sel-read    { border-color: var(--green); color: var(--green); }
+
+/* Tags */
+.tag-editor { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.tag-pill-rm { padding: .2rem .5rem .2rem .6rem; background: var(--surface2);
+  border-radius: 20px; font-size: .75rem; display: flex; align-items: center; gap: .3rem; }
+.tag-pill-rm button { background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: .8rem; padding: 0; line-height: 1; }
+.tag-input-row { display: flex; gap: .5rem; }
+.tag-input { flex: 1; padding: .4rem .65rem; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: .85rem; }
+
+/* Metadata */
+.meta-source { margin-bottom: 1rem; background: var(--surface2);
+  border-radius: 8px; padding: .75rem 1rem; }
+.meta-source-header { display: flex; justify-content: space-between;
+  align-items: center; margin-bottom: .5rem; }
+.meta-source-name { font-weight: 700; font-size: .85rem; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--accent2); }
+.meta-synopsis { font-size: .82rem; color: var(--muted); line-height: 1.55; }
+.meta-field { font-size: .8rem; margin-top: .3rem; }
+.meta-field span { color: var(--muted); }
+.meta-fetch-form { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.meta-fetch-form select { padding: .4rem .65rem; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: .84rem; }
+.meta-fetch-form input { flex: 1; min-width: 150px; padding: .4rem .65rem;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--text); font-size: .84rem; }
+
+/* Standardizer log */
+#std-log { background: #0a0a0e; border-radius: 8px; padding: .75rem;
+  font-family: monospace; font-size: .78rem; max-height: 220px; overflow-y: auto;
+  color: #7dff9e; line-height: 1.55; white-space: pre-wrap; }
+.std-controls { display: flex; gap: .75rem; align-items: center; margin-bottom: .75rem; }
+.toggle-label { display: flex; align-items: center; gap: .4rem; font-size: .84rem; }
+
+/* Toast */
+#toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 9px; padding: .7rem 1.1rem;
+  font-size: .85rem; z-index: 200; opacity: 0; transform: translateY(10px);
+  transition: all .2s; pointer-events: none; max-width: 320px; }
+#toast.show { opacity: 1; transform: none; }
+#toast.ok  { border-color: var(--green); }
+#toast.err { border-color: var(--red);   }
+
+/* Empty state */
+.empty { display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 4rem 1rem; color: var(--muted); gap: .75rem; }
+.empty-icon { font-size: 3rem; }
+.empty-text { font-size: 1rem; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ────────────────────────────────────────────────── -->
+<nav id="sidebar">
+  <div class="logo">📚 Collection<span>manga · comics · ebooks</span></div>
+
+  <div class="nav-section">Browse</div>
+  <div class="nav-item active" data-view="all" onclick="setView('all')">
+    <span class="nav-icon">🏠</span> All books
+  </div>
+  <div class="nav-item" data-view="manga" onclick="setView('manga')">
+    <span class="nav-icon">📖</span> Manga
+  </div>
+  <div class="nav-item" data-view="comics" onclick="setView('comics')">
+    <span class="nav-icon">💥</span> Comics
+  </div>
+  <div class="nav-item" data-view="ebooks" onclick="setView('ebooks')">
+    <span class="nav-icon">📕</span> Ebooks
+  </div>
+
+  <div class="nav-section">Reading</div>
+  <div class="nav-item" data-view="reading" onclick="setView('reading')">
+    <span class="nav-icon">⏳</span> In progress
+  </div>
+  <div class="nav-item" data-view="unread" onclick="setView('unread')">
+    <span class="nav-icon">🔖</span> To read
+  </div>
+  <div class="nav-item" data-view="read" onclick="setView('read')">
+    <span class="nav-icon">✅</span> Finished
+  </div>
+
+  <div class="sidebar-bottom">
+    <button class="scan-btn" onclick="triggerScan()">⟳ Scan library</button>
+  </div>
+</nav>
+
+<!-- ── Main ───────────────────────────────────────────────────── -->
+<main id="main">
+  <!-- Stats bar -->
+  <div id="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Total</div>
+      <div class="stat-value accent" id="stat-total">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Reading</div>
+      <div class="stat-value amber" id="stat-reading">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Finished</div>
+      <div class="stat-value green" id="stat-read">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">To read</div>
+      <div class="stat-value" id="stat-unread">–</div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <input id="search-input" type="search" placeholder="Search title or series…"
+           oninput="debounceSearch()" />
+    <select class="filter-select" id="filter-type" onchange="loadBooks()">
+      <option value="">All formats</option>
+      <option value="cbz">CBZ</option>
+      <option value="cbr">CBR</option>
+      <option value="epub">EPUB</option>
+      <option value="pdf">PDF</option>
+      <option value="mobi">MOBI</option>
+      <option value="azw3">AZW3</option>
+    </select>
+    <select class="filter-select" id="filter-sort" onchange="loadBooks()">
+      <option value="title">Sort: Title</option>
+      <option value="series">Sort: Series</option>
+      <option value="date_added">Sort: Date added</option>
+      <option value="volume">Sort: Volume</option>
+    </select>
+    <span id="result-count"></span>
+    <div class="view-toggle">
+      <button class="view-btn active" id="vbtn-grid" onclick="switchLayout('grid')">⊞</button>
+      <button class="view-btn"        id="vbtn-list" onclick="switchLayout('list')">☰</button>
+    </div>
+  </div>
+
+  <!-- Book containers -->
+  <div id="book-grid"></div>
+  <div id="book-list" style="display:none"></div>
+</main>
+
+<!-- ── Modal ──────────────────────────────────────────────────── -->
+<div id="modal-overlay" onclick="closeModalOnBg(event)">
+  <div id="modal">
+    <div class="modal-header">
+      <div id="modal-cover-wrap"></div>
+      <div class="modal-title-block">
+        <div class="modal-title" id="modal-title"></div>
+        <div class="modal-series" id="modal-series"></div>
+        <div class="modal-badges" id="modal-badges"></div>
+        <div class="modal-path" id="modal-path"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="closeModal()">✕ Close</button>
+          <button class="btn btn-danger" id="btn-delete" onclick="deleteBook()">🗑 Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <!-- Tabs -->
+      <div class="modal-tabs">
+        <div class="modal-tab active" onclick="switchTab('status')">Reading</div>
+        <div class="modal-tab" onclick="switchTab('tags')">Tags</div>
+        <div class="modal-tab" onclick="switchTab('metadata')">Metadata</div>
+        <div class="modal-tab" onclick="switchTab('standardize')">Standardize</div>
+      </div>
+
+      <!-- Tab: Reading status -->
+      <div class="modal-panel active" id="tab-status">
+        <div class="status-row" id="status-opts"></div>
+        <div style="font-size:.8rem;color:var(--muted);margin-bottom:.5rem">
+          Page / progress (optional)
+        </div>
+        <input type="number" id="progress-input" min="0" placeholder="0"
+          style="width:100px;padding:.4rem .6rem;background:var(--surface2);
+          border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:.85rem">
+        <button class="btn btn-primary" style="margin-left:.5rem"
+          onclick="saveStatus()">Save</button>
+      </div>
+
+      <!-- Tab: Tags -->
+      <div class="modal-panel" id="tab-tags">
+        <div class="tag-editor" id="tag-editor"></div>
+        <div class="tag-input-row">
+          <input class="tag-input" id="tag-input" placeholder="Add tag…"
+            onkeydown="if(event.key==='Enter') addTag()">
+          <button class="btn btn-ghost" onclick="addTag()">Add</button>
+        </div>
+      </div>
+
+      <!-- Tab: Metadata -->
+      <div class="modal-panel" id="tab-metadata">
+        <div class="meta-fetch-form">
+          <select id="meta-source">
+            <option value="anilist">AniList</option>
+            <option value="comicvine">ComicVine</option>
+            <option value="googlebooks">Google Books</option>
+          </select>
+          <input id="meta-query" placeholder="Search query…">
+          <button class="btn btn-primary" onclick="fetchMeta()">Fetch</button>
+        </div>
+        <div id="meta-results"></div>
+      </div>
+
+      <!-- Tab: Standardize (CBZ only) -->
+      <div class="modal-panel" id="tab-standardize">
+        <div class="std-controls">
+          <label class="toggle-label">
+            <input type="checkbox" id="std-webp"> Convert to WebP
+          </label>
+          <label class="toggle-label" style="margin-left:.5rem">
+            Quality
+            <input type="number" id="std-quality" value="85" min="0" max="100"
+              style="width:55px;padding:.25rem .4rem;background:var(--surface2);
+              border:1px solid var(--border);border-radius:5px;color:var(--text);
+              font-size:.83rem;margin-left:.3rem">
+          </label>
+          <button class="btn btn-warning" onclick="runStandardize()" id="btn-std">
+            ▶ Run
+          </button>
+        </div>
+        <div id="std-log">Ready.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

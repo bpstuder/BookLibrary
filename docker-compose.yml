@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    container_name: manga-collection
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      # Your manga/comics/ebooks folder — mount as read-only for safety
+      - ${LIBRARY_PATH:-./library}:/app/library:ro
+      # Persistent DB + generated covers
+      - manga_data:/app/data
+    environment:
+      LIBRARY_PATH: /app/library
+      COMICVINE_API_KEY: ${COMICVINE_API_KEY:-}
+      PORT: 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  manga_data:
+    driver: local
