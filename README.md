@@ -29,7 +29,7 @@ A self-hosted web app to manage your manga, comics, and ebook library.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/<you>/manga-collection.git
+git clone https://github.com/bpstuder/manga-collection.git
 cd manga-collection
 
 # 2. Configure
