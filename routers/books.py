@@ -72,13 +72,13 @@ def list_books(
         params.append(tag)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    # Join best metadata row (manual first, then highest score, then most recent)
+    # Join best metadata row: pinned first, then manual, then highest score, then most recent
     sql = f"""
         SELECT b.*,
                rs.status, rs.progress, rs.last_read,
                GROUP_CONCAT(DISTINCT t.name) AS tag_list,
                COALESCE(mc.authors, '[]')    AS meta_authors,
-               mc.synopsis                  AS meta_synopsis
+               mc.synopsis                   AS meta_synopsis
         FROM books b
         LEFT JOIN reading_status rs ON rs.book_id = b.id
         LEFT JOIN book_tags bt ON bt.book_id = b.id
@@ -89,12 +89,12 @@ def list_books(
                    synopsis,
                    ROW_NUMBER() OVER (
                        PARTITION BY book_id
-                       ORDER BY CASE WHEN source='manual' THEN 0 ELSE 1 END,
+                       ORDER BY is_pinned   DESC,
+                                is_manual   DESC,
                                 COALESCE(score, 0) DESC,
-                                fetched_at DESC
+                                fetched_at  DESC
                    ) AS rn
             FROM metadata_cache
-            WHERE authors IS NOT NULL AND authors != '[]'
         ) mc ON mc.book_id = b.id AND mc.rn = 1
         {where}
         GROUP BY b.id
@@ -193,12 +193,12 @@ def get_book(book_id: int):
                 SELECT book_id, authors, synopsis,
                        ROW_NUMBER() OVER (
                            PARTITION BY book_id
-                           ORDER BY CASE WHEN source='manual' THEN 0 ELSE 1 END,
+                           ORDER BY is_pinned   DESC,
+                                    is_manual   DESC,
                                     COALESCE(score, 0) DESC,
-                                    fetched_at DESC
+                                    fetched_at  DESC
                        ) AS rn
                 FROM metadata_cache
-                WHERE authors IS NOT NULL AND authors != '[]'
             ) mc ON mc.book_id = b.id AND mc.rn = 1
             WHERE b.id = ?
             GROUP BY b.id
@@ -337,24 +337,18 @@ def preview_move(book_id: int, body: MovePreviewRequest):
     src     = Path(book["path"])
     library = Path(cfg.get("library_path", "./library")).expanduser().resolve()
 
-    variables = {
-        "series":   _sanitize(book.get("series") or "Unknown Series"),
-        "title":    _sanitize(book.get("title")  or src.stem),
-        "volume":   f"{book.get('volume') or 0:02d}",
-        "category": _sanitize(book.get("category") or "unknown"),
-        "type":     book.get("type") or src.suffix.lstrip("."),
-    }
+    variables = _build_move_vars(book, src)
     try:
         rel_path = body.pattern.format(**variables)
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Unknown pattern variable: {e}")
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}")
 
     dest = (library / rel_path).with_suffix(src.suffix)
     return {
         "source":      str(src),
         "destination": str(dest),
         "pattern":     body.pattern,
-        "variables":   variables,
+        "variables":   {k: str(v) for k, v in variables.items()},
     }
 
 
@@ -385,17 +379,11 @@ def move_book(book_id: int, body: MoveRequest):
         raise HTTPException(status_code=404, detail=f"File not found: {src}")
 
     # Build destination path from pattern
-    variables = {
-        "series":   _sanitize(book.get("series") or "Unknown Series"),
-        "title":    _sanitize(book.get("title")  or src.stem),
-        "volume":   f"{book.get('volume') or 0:02d}",
-        "category": _sanitize(book.get("category") or "unknown"),
-        "type":     book.get("type") or src.suffix.lstrip("."),
-    }
+    variables = _build_move_vars(book, src)
     try:
         rel_path = body.pattern.format(**variables)
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Unknown pattern variable: {e}")
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}")
 
     dest = (library / rel_path).with_suffix(src.suffix)
 
@@ -438,6 +426,25 @@ def move_book(book_id: int, body: MoveRequest):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _build_move_vars(book: dict, src: "Path") -> dict:
+    """Build pattern variables for move/rename — volume kept as int for {volume:02d}."""
+    title = _strip_volume_suffix(book.get("title") or src.stem)
+    return {
+        "series":   _sanitize(book.get("series") or "Unknown Series"),
+        "title":    _sanitize(title),
+        "volume":   book.get("volume") or 0,   # int: supports {volume:02d} in pattern
+        "category": _sanitize(book.get("category") or "unknown"),
+        "type":     book.get("type") or src.suffix.lstrip("."),
+    }
+
+
+def _strip_volume_suffix(title: str) -> str:
+    """Remove trailing volume indicators: 'Dragon Ball T10' → 'Dragon Ball'."""
+    import re as _re
+    t = _re.sub(r'[\s\-_]*[Tt](?:ome|om)?\s*\d+\s*$', '', title)
+    t = _re.sub(r'[\s\-_]*(?:vol|volume|v)\.?\s*\d+\s*$', '', t, flags=_re.IGNORECASE)
+    return t.strip(" -_") or title
 
 def _row_to_book(row) -> BookOut:
     import json as _json

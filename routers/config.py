@@ -36,7 +36,7 @@ router = APIRouter(prefix="/config", tags=["config"])
 
 @router.get("")
 def get_config():
-    """Return current configuration (masks API keys)."""
+    """Return current configuration (masks API keys, exposes env-locked keys)."""
     settings = cfg.get_all()
     masked = dict(settings)
     for key in ("comicvine_api_key", "hardcover_api_key"):
@@ -47,7 +47,7 @@ def get_config():
 
 @router.patch("")
 def patch_config(body: dict):
-    """Partially update settings."""
+    """Partially update settings. Env-locked keys are saved as fallback but not applied now."""
     for key in ("comicvine_api_key", "hardcover_api_key"):
         if body.get(key) == "••••••••":
             body.pop(key)
@@ -190,10 +190,10 @@ def _do_rename(body: RenameRequest) -> list[str]:
     else:
         exts = {".cbz", ".cbr"}
 
-    # Collect candidates from DB to get series/volume info
+    # Collect candidates from DB to get series/volume/category/type info
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, path, title, series, volume, type FROM books"
+            "SELECT id, path, title, series, volume, type, category FROM books"
         ).fetchall()
 
     db_map = {r["path"]: dict(r) for r in rows}
@@ -208,11 +208,11 @@ def _do_rename(body: RenameRequest) -> list[str]:
             info = db_map.get(str(fpath))
 
             # Determine series and volume
-            series = None
-            volume = None
-            if info:
-                series = info.get("series")
-                volume = info.get("volume")
+            series   = info.get("series")   if info else None
+            volume   = info.get("volume")   if info else None
+            title    = info.get("title")    if info else None
+            category = info.get("category") if info else "unknown"
+            ftype    = info.get("type")     if info else ext.lstrip(".")
 
             # Fallback: parse from current filename
             if not series or volume is None:
@@ -225,33 +225,42 @@ def _do_rename(body: RenameRequest) -> list[str]:
                 skipped += 1
                 continue
 
-            # Build new name
+            # Build new name — volume is int so {volume:02d} works
+            # title in DB often contains "Series T01" — strip the volume suffix for cleaner output
+            clean_title = _strip_volume_suffix(title or series or fpath.stem)
+
             try:
-                new_stem = body.pattern.format(
+                rel_path = body.pattern.format(
                     series=series,
-                    volume=volume,
-                    title=info.get("title", series) if info else series,
+                    volume=volume,          # int, supports :02d
+                    title=clean_title,
+                    category=category or "unknown",
+                    type=ftype or ext.lstrip("."),
                 )
             except (KeyError, ValueError) as e:
                 lines.append(f"  [error]   {fpath.name}  — bad pattern: {e}")
                 errors += 1
                 continue
 
-            new_name = _sanitize(new_stem) + ext
-            new_path = fpath.parent / new_name
+            # Sanitize each path segment individually to preserve directory separators
+            parts    = rel_path.replace("\\", "/").split("/")
+            safe_rel = "/".join(_sanitize(p) for p in parts if p)
+            new_path = library / (safe_rel + ext)
 
             if new_path == fpath:
                 lines.append(f"  [ok]      {fpath.name}  — already correct")
                 skipped += 1
                 continue
 
+            rel_display = str(new_path.relative_to(library))
             lines.append(
                 f"  {'[dry-run]' if body.dry_run else '[rename] '}"
-                f"  {fpath.name}  →  {new_name}"
+                f"  {fpath.name}  →  {rel_display}"
             )
 
             if not body.dry_run:
                 try:
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
                     fpath.rename(new_path)
                     # Update DB path
                     with get_conn() as conn:
@@ -290,3 +299,20 @@ def _parse_name(stem: str):
 
 def _sanitize(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip()
+
+
+def _strip_volume_suffix(title: str) -> str:
+    """
+    Remove trailing volume indicators from a title string.
+    e.g. "Dragon Ball Super T10" → "Dragon Ball Super"
+         "One Piece - T01"       → "One Piece"
+         "Naruto Vol. 5"         → "Naruto"
+    """
+    cleaned = re.sub(
+        r'[\s\-_]*(?:[-–]\s*)?[Tt](?:ome|om)?\s*\d+\s*$', '', title
+    )
+    cleaned = re.sub(
+        r'[\s\-_]*(?:[-–]\s*)?(?:vol|volume|v)\.?\s*\d+\s*$', '', cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" -_") or title

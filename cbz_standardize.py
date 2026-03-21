@@ -48,6 +48,30 @@ from xml.etree import ElementTree as ET
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 WEBP_DEFAULT_QUALITY = 85
 
+
+def _is_valid_image(path: Path) -> bool:
+    """
+    Return True only for real image files.
+    Excludes:
+      - macOS AppleDouble metadata files (._filename)
+      - __MACOSX/ directory entries
+      - hidden / dot-files
+      - anything whose suffix is not in IMAGE_EXTENSIONS
+    """
+    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+        return False
+    # macOS resource fork / AppleDouble sidecars always start with "._"
+    if path.name.startswith("._"):
+        return False
+    # Hidden files (Unix dot-files)
+    if path.name.startswith("."):
+        return False
+    # __MACOSX ghost entries
+    parts = path.parts
+    if "__MACOSX" in parts:
+        return False
+    return True
+
 # Characters forbidden in filenames on Windows and Linux
 _FORBIDDEN_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -225,24 +249,30 @@ def extract_cbz(cbz_path: Path, work_dir: Path, dry_run: bool, verbose: bool) ->
 
 def flatten_images(extract_dir: Path, dry_run: bool, verbose: bool) -> list[Path]:
     """
-    Move all JPG/PNG/WebP images (any depth) to the root of extract_dir.
+    Move all valid images (any depth) to the root of extract_dir.
+    Skips macOS AppleDouble files (._*), hidden files, __MACOSX entries.
     Handles filename collisions by appending a numeric suffix.
     Returns the sorted image list.
     """
     for img in sorted(extract_dir.rglob("*"), key=natural_sort_key):
-        if img.suffix.lower() in IMAGE_EXTENSIONS and img.parent != extract_dir:
-            dest = extract_dir / img.name
-            counter = 1
-            while dest.exists() and dest != img:
-                dest = extract_dir / f"{img.stem}_{counter}{img.suffix}"
-                counter += 1
-            log(f"  [flatten] {img.relative_to(extract_dir)} -> {dest.name}", verbose)
-            if not dry_run:
-                img.rename(dest)
+        if not img.is_file():
+            continue
+        if not _is_valid_image(img):
+            continue
+        if img.parent == extract_dir:
+            continue
+        dest = extract_dir / img.name
+        counter = 1
+        while dest.exists() and dest != img:
+            dest = extract_dir / f"{img.stem}_{counter}{img.suffix}"
+            counter += 1
+        log(f"  [flatten] {img.relative_to(extract_dir)} -> {dest.name}", verbose)
+        if not dry_run:
+            img.rename(dest)
 
     images = [
         f for f in extract_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+        if f.is_file() and _is_valid_image(f)
     ]
     return sorted(images, key=natural_sort_key)
 
@@ -283,26 +313,37 @@ def convert_to_webp(
     verbose: bool,
 ) -> list[Path]:
     """
-    Convert each image to WebP without upscaling (original resolution preserved).
-    Deletes the source file after conversion.
+    Convert each image to WebP without upscaling.
+    Skips macOS AppleDouble files and any file Pillow cannot open.
+    Deletes the source file after successful conversion.
     Requires Pillow: pip install Pillow
     """
-    from PIL import Image  # late import — Pillow is optional
+    from PIL import Image, UnidentifiedImageError  # late import — Pillow is optional
 
     converted: list[Path] = []
-    total = len(images)
+    # Filter out macOS junk before even trying
+    valid_images = [p for p in images if _is_valid_image(p)]
+    skipped      = len(images) - len(valid_images)
+    if skipped:
+        log(f"  [webp]    Skipping {skipped} non-image file(s) (macOS metadata etc.)", verbose)
 
-    for i, img_path in enumerate(images, 1):
+    total = len(valid_images)
+    for i, img_path in enumerate(valid_images, 1):
         dest = img_path.with_suffix(".webp")
         log(f"  [webp]    ({i}/{total}) {img_path.name} -> {dest.name}", verbose)
         if not dry_run:
-            with Image.open(img_path) as im:
-                # Preserve original resolution — no resize
-                if im.mode not in ("RGB", "L"):
-                    im = im.convert("RGB")
-                im.save(dest, "WEBP", quality=quality, method=6)
-            img_path.unlink()
-        converted.append(dest)
+            try:
+                with Image.open(img_path) as im:
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    im.save(dest, "WEBP", quality=quality, method=6)
+                img_path.unlink()
+                converted.append(dest)
+            except (UnidentifiedImageError, OSError) as e:
+                log(f"  [warn]    Skipping {img_path.name}: {e}", verbose)
+                # Keep the original file — don't add to converted list
+        else:
+            converted.append(dest)
 
     return converted
 

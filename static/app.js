@@ -9,6 +9,8 @@ let currentLayout    = localStorage.getItem('layout') || 'grid';
 let currentSortField = 'title';
 let currentSortOrder = 'asc';
 let currentBook      = null;
+let selectMode       = false;          // library selection mode
+let libSelection     = new Set();      // selected book IDs in library view
 let searchTimer      = null;
 let fbCurrentPath    = '';
 let selectedMetaId   = null;
@@ -51,6 +53,7 @@ function showSettings() {
 }
 function showLibrary() {
   document.getElementById('settings-page').classList.remove('active');
+  document.getElementById('batch-page').classList.remove('active');
   document.getElementById('library-page').classList.remove('hidden');
 }
 
@@ -189,7 +192,10 @@ async function loadSeriesView() {
     document.getElementById('result-count').textContent = `${series.length} series`;
     if (!series.length) { sg.innerHTML = emptyState(); return; }
 
-    sg.innerHTML = series.map(s => {
+    // Store series names in a lookup to avoid quote-escaping bugs in onclick attributes
+    window._seriesIndex = series.map(s => s.series);
+
+    sg.innerHTML = series.map((s, i) => {
       const total = s.count;
       const r = s.statuses?.read    || 0;
       const p = s.statuses?.reading || 0;
@@ -197,7 +203,7 @@ async function loadSeriesView() {
       const pctP = total ? Math.round(p/total*100) : 0;
       const pctU = 100 - pctR - pctP;
       return `
-        <div class="series-card" onclick="filterBySeries('${esc(s.series)}')">
+        <div class="series-card" data-series-idx="${i}" onclick="filterBySeriesIdx(this)">
           <div class="series-name">${esc(s.series)}</div>
           <div class="series-meta">${s.count} vol. &nbsp;·&nbsp;
             <span class="cat-badge cat-${s.category}">${s.category}</span></div>
@@ -216,9 +222,14 @@ function filterBySeries(series) {
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.view === 'all'));
   document.getElementById('search-input').value = series;
-  // Go back to last non-series layout
   _applyLayout(currentLayout, false);
   loadBooks();
+}
+
+function filterBySeriesIdx(el) {
+  const idx    = parseInt(el.dataset.seriesIdx, 10);
+  const series = (window._seriesIndex || [])[idx];
+  if (series !== undefined) filterBySeries(series);
 }
 
 // ---------------------------------------------------------------------------
@@ -243,8 +254,14 @@ function renderGrid(books) {
   _showOnly('book-grid');
   const el = document.getElementById('book-grid');
   if (!books.length) { el.innerHTML = emptyState(); return; }
-  el.innerHTML = books.map(b => `
-    <div class="book-card" onclick="openModal(${b.id})">
+  el.innerHTML = books.map(b => {
+    const checked = libSelection.has(b.id);
+    return `
+    <div class="book-card ${checked ? 'sel-checked' : ''}" id="bc-${b.id}"
+         onclick="${selectMode ? `toggleLibSel(${b.id})` : `openModal(${b.id})`}">
+      <input type="checkbox" class="book-card-check" ${checked ? 'checked' : ''}
+             onclick="event.stopPropagation();toggleLibSel(${b.id})"
+             title="Select">
       <div class="status-dot ${b.status||'unread'}"></div>
       ${b.cover_path
         ? `<img class="book-cover" src="/books/${b.id}/cover" loading="lazy" alt="">`
@@ -253,15 +270,22 @@ function renderGrid(books) {
         <div class="book-title">${esc(b.title)}</div>
         ${b.series ? `<div class="book-series">${esc(b.series)}${b.volume!=null?` T${String(b.volume).padStart(2,'0')}`:''}</div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderList(books) {
   _showOnly('book-list');
   const el = document.getElementById('book-list');
   if (!books.length) { el.innerHTML = emptyState(); return; }
-  el.innerHTML = books.map(b => `
-    <div class="book-row" onclick="openModal(${b.id})">
+  el.innerHTML = books.map(b => {
+    const checked = libSelection.has(b.id);
+    return `
+    <div class="book-row ${checked ? 'sel-checked' : ''}" id="br-${b.id}"
+         onclick="${selectMode ? `toggleLibSel(${b.id})` : `openModal(${b.id})`}"
+         style="${checked ? 'background:rgba(123,97,255,.08);border-color:var(--accent)' : ''}">
+      <input type="checkbox" class="row-check" ${checked ? 'checked' : ''}
+             onclick="event.stopPropagation();toggleLibSel(${b.id})">
       ${b.cover_path
         ? `<img class="row-thumb" src="/books/${b.id}/cover" loading="lazy" alt="">`
         : `<div class="row-thumb-ph">${typeIcon(b.type)}</div>`}
@@ -277,75 +301,75 @@ function renderList(books) {
         <span class="cat-badge cat-${b.category||'unknown'}">${b.category||'?'}</span>
         <span class="status-badge ${b.status||'unread'}">${b.status||'unread'}</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
-// ---------------------------------------------------------------------------
-// Table view — FIX: sortable headers + author column + column toggle
-// ---------------------------------------------------------------------------
 function renderTable(books) {
   _showOnly('book-table-wrap');
   _rebuildTableHeader();
   const tbody = document.getElementById('book-tbody');
   if (!books.length) {
-    tbody.innerHTML = `<tr><td colspan="${visibleColumns.length}">${emptyState()}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${visibleColumns.length + 2}">${emptyState()}</td></tr>`;
     return;
   }
-
-  // Pre-fetch authors from cached metadata (best-effort, from window._metaAuthors)
   tbody.innerHTML = books.map(b => {
+    const checked = libSelection.has(b.id);
     const cells = visibleColumns.map(col => {
       switch (col) {
         case 'cover':
           return `<td>${b.cover_path
             ? `<img class="tbl-thumb" src="/books/${b.id}/cover" loading="lazy" alt="">`
             : `<div class="tbl-thumb-ph">${typeIcon(b.type)}</div>`}</td>`;
-        case 'title':
-          return `<td><strong>${esc(b.title)}</strong></td>`;
-        case 'series':
-          return `<td>${b.series ? esc(b.series) : '<span style="color:var(--muted)">—</span>'}</td>`;
-        case 'volume':
-          return `<td style="text-align:center">${b.volume!=null ? String(b.volume).padStart(2,'0') : '—'}</td>`;
-        case 'authors':
-          return `<td style="color:var(--muted);font-size:.78rem">${esc((b.authors||[]).join(', ') || '—')}</td>`;
-        case 'format':
-          return `<td><span class="type-badge type-${b.type}">${b.type.toUpperCase()}</span></td>`;
-        case 'category':
-          return `<td><span class="cat-badge cat-${b.category||'unknown'}">${b.category||'?'}</span></td>`;
-        case 'status':
-          return `<td><span class="status-badge ${b.status||'unread'}">${b.status||'unread'}</span></td>`;
-        case 'size':
-          return `<td style="color:var(--muted);font-size:.78rem">${b.file_size ? fmtSize(b.file_size) : '—'}</td>`;
+        case 'title':    return `<td><strong>${esc(b.title)}</strong></td>`;
+        case 'series':   return `<td>${b.series ? esc(b.series) : '<span style="color:var(--muted)">—</span>'}</td>`;
+        case 'volume':   return `<td style="text-align:center">${b.volume!=null ? String(b.volume).padStart(2,'0') : '—'}</td>`;
+        case 'authors':  return `<td style="color:var(--muted);font-size:.78rem">${esc((b.authors||[]).join(', ') || '—')}</td>`;
+        case 'format':   return `<td><span class="type-badge type-${b.type}">${b.type.toUpperCase()}</span></td>`;
+        case 'category': return `<td><span class="cat-badge cat-${b.category||'unknown'}">${b.category||'?'}</span></td>`;
+        case 'status':   return `<td><span class="status-badge ${b.status||'unread'}">${b.status||'unread'}</span></td>`;
+        case 'size':     return `<td style="color:var(--muted);font-size:.78rem">${b.file_size ? fmtSize(b.file_size) : '—'}</td>`;
         default: return '<td></td>';
       }
     }).join('');
-    return `<tr onclick="openModal(${b.id})">${cells}</tr>`;
+    return `<tr onclick="${selectMode ? `toggleLibSel(${b.id})` : `openModal(${b.id})`}"
+               id="tr-${b.id}" style="${checked ? 'background:rgba(123,97,255,.08)' : ''}">
+      <td onclick="event.stopPropagation()">
+        <input type="checkbox" ${checked ? 'checked' : ''} style="accent-color:var(--accent)"
+               onclick="toggleLibSel(${b.id})">
+      </td>
+      ${cells}
+    </tr>`;
   }).join('');
 }
 
 function _rebuildTableHeader() {
-  const LABELS = {
-    cover:'', title:'Title', series:'Series', volume:'Vol.',
-    authors:'Authors', format:'Format', category:'Category',
-    status:'Status', size:'Size'
-  };
+  const LABELS   = { cover:'', title:'Title', series:'Series', volume:'Vol.',
+    authors:'Authors', format:'Format', category:'Category', status:'Status', size:'Size' };
   const SORTABLE = ['title','series','volume','category','status'];
+  const allChecked = window._lastBooks?.length > 0 &&
+    window._lastBooks.every(b => libSelection.has(b.id));
 
   const thead = document.querySelector('#book-table thead tr');
-  thead.innerHTML = visibleColumns.map(col => {
-    const label = LABELS[col] || col;
-    const sortable = SORTABLE.includes(col);
-    const arrow = col === currentSortField ? (currentSortOrder === 'asc' ? ' ▲' : ' ▼') : '';
-    return sortable
-      ? `<th data-sort="${col}" data-label="${label}" onclick="sortBy('${col}')"
-             style="cursor:pointer;user-select:none">${label}${arrow}</th>`
-      : `<th>${label}</th>`;
-  }).join('') +
-    // Column toggle button in last header cell
+  // Checkbox header col + data cols + settings col
+  thead.innerHTML =
+    `<th style="width:28px">
+       <input type="checkbox" ${allChecked ? 'checked' : ''} style="accent-color:var(--accent)"
+              onclick="libToggleAll(this.checked)" title="Select all">
+     </th>` +
+    visibleColumns.map(col => {
+      const label    = LABELS[col] || col;
+      const sortable = SORTABLE.includes(col);
+      const arrow    = col === currentSortField ? (currentSortOrder === 'asc' ? ' ▲' : ' ▼') : '';
+      return sortable
+        ? `<th data-sort="${col}" data-label="${label}" onclick="sortBy('${col}')"
+               style="cursor:pointer;user-select:none">${label}${arrow}</th>`
+        : `<th>${label}</th>`;
+    }).join('') +
     `<th style="width:28px;text-align:right">
-      <button onclick="toggleColMenu()" title="Columns" style="background:none;border:none;
-        cursor:pointer;color:var(--muted);font-size:.9rem;padding:0">⚙</button>
-    </th>`;
+       <button onclick="toggleColMenu()" title="Columns" style="background:none;border:none;
+         cursor:pointer;color:var(--muted);font-size:.9rem;padding:0">⚙</button>
+     </th>`;
 }
 
 function toggleColMenu() {
@@ -403,6 +427,242 @@ function toggleColumn(col, checked) {
 
 function emptyState() {
   return `<div class="empty"><div class="empty-icon">📭</div><div>No books found</div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Library selection mode
+// ---------------------------------------------------------------------------
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  if (!selectMode) libSelection.clear();
+
+  const btn  = document.getElementById('vbtn-sel');
+  const bar  = document.getElementById('select-bar');
+  const page = document.getElementById('library-page');
+
+  btn?.classList.toggle('active', selectMode);
+  page?.classList.toggle('sel-mode', selectMode);
+
+  if (selectMode) {
+    bar?.classList.add('visible');
+  } else {
+    bar?.classList.remove('visible');
+  }
+  _updateSelectBar();
+  renderBooks(window._lastBooks || []);
+}
+
+function toggleLibSel(id) {
+  if (libSelection.has(id)) {
+    libSelection.delete(id);
+  } else {
+    libSelection.add(id);
+    if (!selectMode) {
+      // Auto-enter select mode on first check
+      selectMode = true;
+      document.getElementById('vbtn-sel')?.classList.add('active');
+      document.getElementById('library-page')?.classList.add('sel-mode');
+      document.getElementById('select-bar')?.classList.add('visible');
+    }
+  }
+  // Update visual state without full re-render
+  _updateCardCheck(id);
+  _updateSelectBar();
+}
+
+function _updateCardCheck(id) {
+  const checked = libSelection.has(id);
+  // Grid card
+  const card = document.getElementById('bc-' + id);
+  if (card) {
+    card.classList.toggle('sel-checked', checked);
+    const cb = card.querySelector('.book-card-check');
+    if (cb) cb.checked = checked;
+  }
+  // List row
+  const row = document.getElementById('br-' + id);
+  if (row) {
+    row.style.background = checked ? 'rgba(123,97,255,.08)' : '';
+    row.style.borderColor = checked ? 'var(--accent)' : '';
+    const cb = row.querySelector('.row-check');
+    if (cb) cb.checked = checked;
+  }
+  // Table row
+  const tr = document.getElementById('tr-' + id);
+  if (tr) {
+    tr.style.background = checked ? 'rgba(123,97,255,.08)' : '';
+    const cb = tr.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = checked;
+  }
+  // Rebuild table header "select all" state
+  if (currentLayout === 'table') {
+    const allChecked = window._lastBooks?.length > 0 &&
+      window._lastBooks.every(b => libSelection.has(b.id));
+    const hcb = document.querySelector('#book-table thead input[type=checkbox]');
+    if (hcb) hcb.checked = allChecked;
+  }
+}
+
+function _updateSelectBar() {
+  const count = libSelection.size;
+  const el    = document.getElementById('select-bar-count');
+  if (el) el.textContent = `${count} selected`;
+  // Also sync with batch page selection
+  _batchSelected = new Set(libSelection);
+}
+
+function libToggleAll(checked) {
+  (window._lastBooks || []).forEach(b => {
+    if (checked) libSelection.add(b.id);
+    else libSelection.delete(b.id);
+  });
+  // Auto-enter select mode if checking
+  if (checked && !selectMode) {
+    selectMode = true;
+    document.getElementById('vbtn-sel')?.classList.add('active');
+    document.getElementById('library-page')?.classList.add('sel-mode');
+    document.getElementById('select-bar')?.classList.add('visible');
+  } else if (!checked && libSelection.size === 0) {
+    // Unchecking all — exit select mode
+    selectMode = false;
+    document.getElementById('vbtn-sel')?.classList.remove('active');
+    document.getElementById('library-page')?.classList.remove('sel-mode');
+    document.getElementById('select-bar')?.classList.remove('visible');
+  }
+  _updateSelectBar();
+  renderBooks(window._lastBooks || []);
+}
+
+function libSelectAll()    { libToggleAll(true); }
+function libSelectNone()   { libSelection.clear(); _updateSelectBar(); renderBooks(window._lastBooks||[]); }
+function libInvertSel()    {
+  (window._lastBooks||[]).forEach(b => {
+    if (libSelection.has(b.id)) libSelection.delete(b.id);
+    else libSelection.add(b.id);
+  });
+  _updateSelectBar();
+  renderBooks(window._lastBooks || []);
+}
+
+// ---------------------------------------------------------------------------
+// Quick batch actions from library selection bar
+// ---------------------------------------------------------------------------
+
+async function libBatchScrape() {
+  if (!libSelection.size) return;
+  // Navigate to batch page with selection pre-loaded
+  _batchSelected = new Set(libSelection);
+  showBatch();
+  // Expand scrape section and scroll to it
+  const body = document.getElementById('scrape-body');
+  if (body?.classList.contains('collapsed')) toggleBatchSection('scrape');
+  setTimeout(() => body?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+}
+
+async function libBatchApply() {
+  if (!libSelection.size) { toast('Select books first', 'err'); return; }
+  if (!confirm(`Apply pinned metadata to ${libSelection.size} book(s)?`)) return;
+
+  const ids    = [...libSelection];
+  const fields = ['title','series','synopsis','authors','genres','year','publisher'];
+  const btn    = document.getElementById('select-bar');
+
+  // Quick inline operation — no navigation needed
+  const resp = await fetch('/batch/metadata/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_ids: ids, fields, pinned_only: true }),
+  });
+  // Read SSE to completion silently
+  await _drainSSE(resp, (done, total) => {
+    const el = document.getElementById('select-bar-count');
+    if (el) el.textContent = `Applying… ${done}/${total}`;
+  });
+  toast(`Applied metadata to ${ids.length} books`, 'ok');
+  loadBooks(); loadStats();
+  _updateSelectBar();
+}
+
+async function libBatchEdit() {
+  if (!libSelection.size) { toast('Select books first', 'err'); return; }
+  _batchSelected = new Set(libSelection);
+  showBatch();
+  const body = document.getElementById('edit-body');
+  if (body?.classList.contains('collapsed')) toggleBatchSection('edit');
+  setTimeout(() => body?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+}
+
+async function libBatchDelete() {
+  if (!libSelection.size) { toast('Select books first', 'err'); return; }
+  if (!confirm(`Delete scraped metadata for ${libSelection.size} book(s)?\nManual entries will be kept.`)) return;
+
+  const ids  = [...libSelection];
+  const resp = await fetch('/batch/metadata/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_ids: ids, keep_manual: true }),
+  });
+  await _drainSSE(resp);
+  toast(`Metadata deleted for ${ids.length} books`, 'ok');
+}
+
+async function libBatchWebp() {
+  if (!libSelection.size) { toast('Select books first', 'err'); return; }
+  // Only CBZ/CBR support conversion
+  const books    = (window._lastBooks || []).filter(b => libSelection.has(b.id));
+  const eligible = books.filter(b => ['cbz','cbr'].includes(b.type));
+  if (!eligible.length) {
+    toast('No CBZ/CBR files in selection — WebP conversion requires CBZ or CBR', 'err');
+    return;
+  }
+  const skipped = books.length - eligible.length;
+  const msg = skipped
+    ? `Convert ${eligible.length} CBZ/CBR files to WebP?\n(${skipped} non-CBZ files will be skipped)`
+    : `Convert ${eligible.length} CBZ/CBR files to WebP?`;
+  if (!confirm(msg)) return;
+
+  // Read quality from config defaults
+  let quality = 85;
+  try { const cfg = await api('/config'); quality = cfg.std_webp_quality ?? 85; } catch (_) {}
+
+  const ids  = eligible.map(b => b.id);
+  const btn  = document.getElementById('select-bar-count');
+  const orig = btn?.textContent;
+  if (btn) btn.textContent = `Converting… 0/${ids.length}`;
+
+  const resp = await fetch('/batch/convert/webp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_ids: ids, webp_quality: quality, delete_old: false }),
+  });
+  await _drainSSE(resp, (done, total) => {
+    if (btn) btn.textContent = `Converting… ${done}/${total}`;
+  });
+  if (btn) btn.textContent = orig;
+  toast(`WebP conversion complete for ${ids.length} files`, 'ok');
+  loadBooks();
+}
+
+// Drain an SSE stream silently, calling onProgress(done,total) on each progress event
+async function _drainSSE(resp, onProgress) {
+  if (!resp.body) return;
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for (const part of parts) {
+      const dl = part.split('\n').find(l => l.startsWith('data:'));
+      const el = part.split('\n').find(l => l.startsWith('event:'));
+      if (!dl || !onProgress) continue;
+      try {
+        const evt  = el ? el.slice(6).trim() : 'log';
+        const data = JSON.parse(dl.slice(5).trim());
+        if (evt === 'progress' && onProgress) onProgress(data.done, data.total);
+      } catch (_) {}
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +744,7 @@ function closeModalOnBg(e) {
 // Modal tabs
 // ---------------------------------------------------------------------------
 function switchTab(name) {
-  const names = ['info','reading','tags','metadata','standardize','move'];
+  const names = ['info','reading','tags','metadata','conversion','move'];
   const idx = names.indexOf(name);
   document.querySelectorAll('.modal-tab').forEach((t,i)  => t.classList.toggle('active', i===idx));
   document.querySelectorAll('.modal-panel').forEach((p,i) => p.classList.toggle('active', i===idx));
@@ -494,46 +754,107 @@ function switchTab(name) {
 // Tab: Info
 // ---------------------------------------------------------------------------
 function populateInfoTab(b) {
-  document.getElementById('info-title').value  = b.title  || '';
-  document.getElementById('info-series').value = b.series || '';
-  document.getElementById('info-volume').value = b.volume != null ? b.volume : '';
-  document.getElementById('info-type').value   = b.type   || 'unknown';
+  // File classification fields (still editable)
+  document.getElementById('info-type').value = b.type || 'unknown';
   renderCatOpts(b.category || 'unknown');
-  _renderInfoMeta(b);
+  // Metadata display (read-only, loaded from cache)
+  _renderInfoMeta(b.id);
 }
 
-function _renderInfoMeta(b) {
-  const section = document.getElementById('info-meta-section');
-  const content = document.getElementById('info-meta-content');
+async function _renderInfoMeta(bookId) {
+  const panel = document.getElementById('info-meta-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div style="color:var(--muted);font-size:.8rem">Loading…</div>';
 
-  // Get best metadata from the book (joined by backend)
-  const hasMeta = b.synopsis || (b.authors && b.authors.length > 0);
-  if (!hasMeta) {
-    section.style.display = 'none';
+  let rows = [];
+  try { rows = await api(`/books/${bookId}/metadata`); } catch (_) {}
+
+  if (!rows.length) {
+    panel.innerHTML = `<div style="color:var(--muted);font-size:.82rem;font-style:italic;padding:.4rem 0">
+      No metadata yet — go to the <strong>Metadata</strong> tab to search or add some.
+    </div>`;
     return;
   }
-  section.style.display = 'block';
 
-  // Also load full metadata for genres/year/publisher from cache
-  api(`/books/${b.id}/metadata`).then(rows => {
-    // Pick best: manual > highest score > most recent
-    const best = rows.find(r => r.source === 'manual')
-      || rows.filter(r => r.source !== 'manual').sort((a, z) => (z.score||0) - (a.score||0))[0];
-    if (!best) return;
+  // Priority: pinned > manual > highest score > most recent
+  const pinned = rows.find(r => r.is_pinned);
+  const manual = rows.find(r => r.is_manual || r.source === 'manual');
+  const best   = pinned
+    || manual
+    || [...rows].sort((a, z) => (z.score || 0) - (a.score || 0))[0];
 
-    const fields = [
-      best.synopsis  && `<div style="font-size:.8rem;color:var(--muted);line-height:1.5;margin-bottom:.5rem">${esc(best.synopsis.slice(0,400))}${best.synopsis.length>400?'…':''}</div>`,
-      (best.authors||[]).length && `<div class="meta-field"><span>Authors:</span> ${best.authors.map(esc).join(', ')}</div>`,
-      (best.genres||[]).length  && `<div class="meta-field"><span>Genres:</span>  ${best.genres.slice(0,6).map(esc).join(', ')}</div>`,
-      best.publisher && `<div class="meta-field"><span>Publisher:</span> ${esc(best.publisher)}</div>`,
-      best.year      && `<div class="meta-field"><span>Year:</span> ${best.year}</div>`,
-      best.score     && `<div class="meta-field"><span>Score:</span> ${best.score}/10</div>`,
-      `<div style="font-size:.68rem;color:var(--muted);margin-top:.4rem">Source: ${esc(best.source.replace(/_\d+$/,''))}</div>`,
-    ].filter(Boolean).join('');
+  const srcLabel = best.source.replace(/_\d+$/, '');
+  const isPinned = best.is_pinned;
+  const isManual = best.is_manual || best.source === 'manual';
 
-    content.innerHTML = fields || '<span style="color:var(--muted);font-size:.78rem">No metadata available</span>';
-  }).catch(() => {});
+  const field = (key, val) => {
+    if (!val || (Array.isArray(val) && !val.length)) return '';
+    const display = Array.isArray(val) ? val.map(esc).join(', ') : esc(String(val));
+    return `<div class="info-meta-field">
+      <span class="info-meta-key">${key}</span>
+      <span class="info-meta-val">${display}</span>
+    </div>`;
+  };
+
+  let html = '';
+
+  // Cover thumbnail (float right)
+  if (best.cover_url) {
+    html += `<img src="${esc(best.cover_url)}" class="info-meta-cover"
+               onerror="this.style.display='none'" loading="lazy" alt="cover">`;
+  }
+
+  // Synopsis at top
+  if (best.synopsis) {
+    const syn = best.synopsis.length > 500
+      ? best.synopsis.slice(0, 500) + '…'
+      : best.synopsis;
+    html += `<div class="info-meta-synopsis">${esc(syn)}</div>`;
+  }
+
+  // Structured fields
+  html += field('Title',     best.title);
+  html += field('Series',    best.series);
+  html += field('Volume',    best.volume != null ? best.volume : null);
+  html += field('Authors',   best.authors);
+  html += field('Artists',   best.artists);
+  html += field('Genres',    best.genres);
+  html += field('Tags',      (best.tags || []).slice(0, 8));
+  html += field('Publisher', best.publisher);
+  html += field('Year',      best.year);
+  html += field('Language',  best.language);
+  html += field('Country',   best.country);
+  html += field('Status',    best.pub_status);
+  html += field('Score',     best.score ? `${best.score}/10${best.score_count ? ` (${best.score_count.toLocaleString()} votes)` : ''}` : null);
+  html += field('Popularity',best.popularity ? best.popularity.toLocaleString() : null);
+  html += field('ISBN',      best.isbn || best.isbn13);
+
+  // Source info
+  const flags = [
+    isPinned ? '📌 Pinned' : '',
+    isManual ? '✏️ Manual' : '',
+    !isPinned && !isManual ? `from ${srcLabel}` : srcLabel,
+  ].filter(Boolean).join(' · ');
+
+  html += `<div class="info-meta-source">${esc(flags)}`;
+
+  // Quick link to metadata tab
+  html += `&nbsp;<button onclick="switchTab('metadata')"
+    style="background:none;border:none;cursor:pointer;color:var(--accent2);
+    font-size:.7rem;padding:0;text-decoration:underline">
+    Edit in Metadata tab →
+  </button></div>`;
+
+  // If more rows available, show count
+  if (rows.length > 1) {
+    html += `<div style="font-size:.7rem;color:var(--muted);margin-top:.3rem">
+      ${rows.length - 1} other result${rows.length > 2 ? 's' : ''} available in Metadata tab
+    </div>`;
+  }
+
+  panel.innerHTML = html;
 }
+
 function renderCatOpts(current) {
   document.getElementById('cat-opts').innerHTML =
     ['manga','comics','book','unknown'].map(c =>
@@ -546,32 +867,27 @@ function selectCat(cat) {
     el.className = `cat-opt ${c===cat?'sel-'+c:''}`;
   });
 }
-async function saveInfo() {
-  if (!currentBook) return;
-  const sel = document.querySelector('.cat-opt[class*="sel-"]');
-  const body = {};
-  const title  = document.getElementById('info-title').value.trim();
-  const series = document.getElementById('info-series').value.trim();
-  const vol    = document.getElementById('info-volume').value;
-  const type   = document.getElementById('info-type').value;
-  if (title)         body.title    = title;
-  if (series !== undefined) body.series   = series || null;
-  if (vol !== '')    body.volume   = parseInt(vol) || null;
-  if (type)          body.type     = type;
-  if (sel)           body.category = sel.textContent.trim();
 
+// Save only the file classification fields (category + type)
+async function saveFileClass() {
+  if (!currentBook) return;
+  const sel  = document.querySelector('.cat-opt[class*="sel-"]');
+  const type = document.getElementById('info-type').value;
+  const body = {};
+  if (sel)  body.category = sel.textContent.trim();
+  if (type) body.type     = type;
+  if (!Object.keys(body).length) return;
   try {
-    const updated = await api(`/books/${currentBook.id}`, { method:'PATCH', body });
+    const updated = await api(`/books/${currentBook.id}`, { method: 'PATCH', body });
     currentBook = updated;
-    document.getElementById('modal-title').textContent  = updated.title;
-    document.getElementById('modal-series').textContent =
-      updated.series ? `${updated.series}${updated.volume!=null?` — Vol. ${updated.volume}`:''}` : '';
+    // Refresh badges in modal header
     document.getElementById('modal-badges').innerHTML = `
       <span class="type-badge type-${updated.type}">${updated.type.toUpperCase()}</span>
       <span class="cat-badge cat-${updated.category||'unknown'}">${updated.category||'unknown'}</span>
       <span class="status-badge ${updated.status||'unread'}">${updated.status||'unread'}</span>
       ${updated.file_size ? `<span class="tag-pill">${fmtSize(updated.file_size)}</span>` : ''}`;
-    toast('Book updated', 'ok'); loadBooks(); loadStats();
+    toast('Classification saved', 'ok');
+    loadBooks();
   } catch (e) { toast(`Save failed: ${e.message}`, 'err'); }
 }
 
@@ -837,11 +1153,14 @@ async function fetchMeta() {
       method: 'POST', body: { book_id: currentBook.id, source, query },
     });
     _lastFetchSource = source;
-    renderMeta(resp.results || [], source);
-    const count = (resp.results || []).length;
+    // Always read back from DB — the stored rows have all fields (title, authors…)
+    // properly populated, unlike the raw fetcher response
+    const rows  = await api(`/books/${currentBook.id}/metadata`);
+    const count = rows.filter(r => r.source.startsWith(source + '_')).length;
+    renderMeta(rows, source);
     toast(`${count} result${count!==1?'s':''} from ${source}`, 'ok');
     // Refresh info tab metadata panel
-    _renderInfoMeta(currentBook);
+    _renderInfoMeta(currentBook.id);
   } catch (e) {
     toast(`Fetch failed: ${e.message}`, 'err');
     document.getElementById('meta-results').innerHTML =
@@ -949,7 +1268,7 @@ async function saveManualMeta(andPin = false) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Standardize
+// Tab: Conversion
 // ---------------------------------------------------------------------------
 function populateStdTab() {
   document.getElementById('std-log').textContent = 'Ready.';
@@ -977,7 +1296,7 @@ async function runStandardize() {
 
   await streamSSE(resp, {
     log:   line => { log.textContent += line+'\n'; log.scrollTop=log.scrollHeight; },
-    done:  path => { log.textContent += `\n✓ Done: ${path}\n`; toast('Standardization complete','ok'); loadBooks(); },
+    done:  path => { log.textContent += `\n✓ Done: ${path}\n`; toast('Conversion complete','ok'); loadBooks(); },
     error: msg  => { log.textContent += `\n✗ Error: ${msg}\n`; toast(`Error: ${msg}`,'err'); },
   });
   btn.disabled = false;
@@ -1083,52 +1402,97 @@ async function deleteBook() {
 async function loadSettingsPage() {
   setSaveStatus('');
   try {
-    const cfg     = await api('/config');
-    const sources = await api('/metadata/sources').catch(() => []);
+    const config = await api('/config');
+    const locked = new Set(config._env_locked || []);
 
-    document.getElementById('cfg-library-path').value   = cfg.library_path || '';
-    document.getElementById('cfg-scan-startup').checked  = !!cfg.scan_on_startup;
-    document.getElementById('cfg-std-webp').checked     = !!cfg.std_webp;
-    document.getElementById('cfg-std-quality').value    = cfg.std_webp_quality ?? 85;
-    document.getElementById('cfg-std-delete').checked   = !!cfg.std_delete_old;
-    document.getElementById('cfg-debug').checked        = !!cfg.debug;
+    // Helper — set input value and mark read-only if env-locked
+    const setField = (id, val, lockKey) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = val ?? '';
+      const isLocked = lockKey && locked.has(lockKey);
+      el.readOnly = isLocked;
+      el.style.opacity = isLocked ? '0.6' : '';
+      el.title = isLocked ? `Set via environment variable — edit your .env to change` : '';
+      // Add/remove lock badge
+      const badge = document.getElementById(id + '-lock');
+      if (badge) badge.style.display = isLocked ? 'inline' : 'none';
+    };
 
-    // Metadata settings
+    setField('cfg-library-path', config.library_path, 'library_path');
+    document.getElementById('cfg-scan-startup').checked = !!config.scan_on_startup;
+    document.getElementById('cfg-std-webp').checked     = !!config.std_webp;
+    document.getElementById('cfg-std-quality').value    = config.std_webp_quality ?? 85;
+    document.getElementById('cfg-std-delete').checked   = !!config.std_delete_old;
+    document.getElementById('cfg-debug').checked        = !!config.debug;
+
     const storageEl = document.getElementById('cfg-meta-storage');
-    if (storageEl) storageEl.value = cfg.metadata_storage || 'db';
+    if (storageEl) storageEl.value = config.metadata_storage || 'db';
     const dirEl = document.getElementById('cfg-meta-files-dir');
-    if (dirEl) dirEl.value = cfg.metadata_files_dir || 'data/metadata';
+    if (dirEl) dirEl.value = config.metadata_files_dir || 'data/metadata';
 
     // Provider checkboxes
     const provList = document.getElementById('cfg-providers-list');
-    if (provList && sources.length) {
-      const enabled = cfg.metadata_providers_enabled || sources.map(s => s.id);
-      provList.innerHTML = sources.map(s => `
-        <div class="s-checkbox-row">
+    if (provList) {
+      const sources = await api('/metadata/sources').catch(() => []);
+      const enabled = config.metadata_providers_enabled || sources.map(s => s.id);
+      const LABELS = {
+        anilist:     'AniList (manga, free)',
+        comicvine:   'ComicVine (comics, needs key)',
+        googlebooks: 'Google Books (free)',
+        hardcover:   'Hardcover (needs key)',
+        openlib:     'Open Library (free)',
+      };
+      provList.innerHTML = sources.map(s => {
+        const keyTag = s.requires_key
+          ? (s.key_set
+              ? `<span style="color:var(--green);font-size:.7rem"> ✓ key set</span>`
+              : `<span style="color:var(--amber);font-size:.7rem"> ⚠ key not set</span>`)
+          : `<span style="color:var(--muted);font-size:.7rem"> (free)</span>`;
+        return `<div class="s-checkbox-row">
           <input type="checkbox" id="prov-${s.id}" value="${s.id}"
-            ${enabled.includes(s.id) ? 'checked' : ''}>
-          <label for="prov-${s.id}">${esc(s.label)}
-            ${s.requires_key && !s.key_set
-              ? '<span style="color:var(--amber);font-size:.72rem"> (key not set)</span>'
-              : s.requires_key
-                ? '<span style="color:var(--green);font-size:.72rem"> (key set)</span>'
-                : '<span style="color:var(--muted);font-size:.72rem"> (free)</span>'}
-          </label>
-        </div>`).join('');
+            ${enabled.includes(s.id) ? 'checked' : ''} style="accent-color:var(--accent)">
+          <label for="prov-${s.id}" style="font-size:.85rem">${esc(LABELS[s.id]||s.id)}${keyTag}</label>
+        </div>`;
+      }).join('');
     }
 
-    // API keys — never prefill, show lock status
+    // API keys
     document.getElementById('cfg-comicvine-key').value = '';
     document.getElementById('cfg-hardcover-key').value = '';
-    _showKeyStatus('cfg-comicvine-key', cfg.comicvine_api_key === '••••••••');
-    _showKeyStatus('cfg-hardcover-key', cfg.hardcover_api_key === '••••••••');
+    _showKeyStatus('cfg-comicvine-key',
+      config.comicvine_api_key === '••••••••',
+      locked.has('comicvine_api_key'));
+    _showKeyStatus('cfg-hardcover-key',
+      config.hardcover_api_key === '••••••••',
+      locked.has('hardcover_api_key'));
+
+    // Show global env notice if any keys are locked
+    const envNotice = document.getElementById('env-locked-notice');
+    if (envNotice) {
+      if (locked.size > 0) {
+        const names = [...locked].map(k => `<code>${k}</code>`).join(', ');
+        envNotice.innerHTML = `🔒 ${names} ${locked.size === 1 ? 'is' : 'are'} set via environment variable and cannot be changed from the UI.`;
+        envNotice.style.display = 'block';
+      } else {
+        envNotice.style.display = 'none';
+      }
+    }
   } catch { toast('Failed to load settings', 'err'); }
 }
 
-function _showKeyStatus(inputId, isSet) {
+function _showKeyStatus(inputId, isSet, isLocked) {
   const el = document.getElementById(inputId);
   if (!el) return;
-  el.placeholder = isSet ? '(key configured — leave blank to keep)' : 'Enter API key…';
+  if (isLocked) {
+    el.placeholder = '(set via environment variable — read-only)';
+    el.readOnly = true;
+    el.style.opacity = '0.6';
+  } else {
+    el.placeholder = isSet ? '(key configured — leave blank to keep)' : 'Enter API key…';
+    el.readOnly = false;
+    el.style.opacity = '';
+  }
 }
 
 async function saveSettings() {
@@ -1173,18 +1537,41 @@ function setSaveStatus(msg, ok=false) {
 
 // Path verify & folder browser
 async function verifyPath() {
-  const path = document.getElementById('cfg-library-path').value.trim();
+  const pathEl = document.getElementById('cfg-library-path');
+  const path   = pathEl.value.trim();
   if (!path) return;
   const el = document.getElementById('path-verify');
-  el.style.display='block'; el.className='path-verify'; el.textContent='Checking…';
+  el.style.display = 'block'; el.className = 'path-verify'; el.textContent = 'Checking…';
   try {
-    const r = await api('/config/verify-path', { method:'POST', body:{ path } });
+    const r = await api('/config/verify-path', { method: 'POST', body: { path } });
     if (r.valid) {
-      const parts = Object.entries(r.by_format||{}).map(([k,v])=>`${v} ${k.toUpperCase()}`).join('  ·  ');
-      el.className='path-verify ok';
-      el.textContent=`✓ ${r.total} files found${parts?'  —  '+parts:''}`;
-    } else { el.className='path-verify err'; el.textContent=`✗ ${r.error}`; }
-  } catch (e) { el.className='path-verify err'; el.textContent=`✗ ${e.message}`; }
+      const parts = Object.entries(r.by_format || {})
+        .map(([k, v]) => `${v} ${k.toUpperCase()}`).join('  ·  ');
+      el.className = 'path-verify ok';
+      el.innerHTML = `✓ ${r.total} files found${parts ? '  —  ' + parts : ''}
+        &nbsp;&nbsp;<button onclick="saveLibraryPath('${esc(path)}')"
+          style="background:var(--accent);color:#fff;border:none;border-radius:5px;
+          padding:.2rem .55rem;font-size:.75rem;cursor:pointer;font-weight:600">
+          Save this path
+        </button>`;
+    } else {
+      el.className = 'path-verify err';
+      el.textContent = `✗ ${r.error}`;
+    }
+  } catch (e) {
+    el.className = 'path-verify err';
+    el.textContent = `✗ ${e.message}`;
+  }
+}
+
+async function saveLibraryPath(path) {
+  try {
+    await api('/config', { method: 'PATCH', body: { library_path: path } });
+    document.getElementById('path-verify').innerHTML =
+      `<span style="color:var(--green)">✓ Path saved: ${esc(path)}</span>`;
+    setSaveStatus('✓ Library path saved', true);
+    toast('Library path saved', 'ok');
+  } catch (e) { toast(`Failed to save: ${e.message}`, 'err'); }
 }
 function clearPathVerify() {
   const el=document.getElementById('path-verify'); el.className='path-verify'; el.style.display='none';
@@ -1320,4 +1707,456 @@ let _toastTimer;
 function toast(msg,type='ok'){
   const el=document.getElementById('toast'); el.textContent=msg; el.className=`show ${type}`;
   clearTimeout(_toastTimer); _toastTimer=setTimeout(()=>el.classList.remove('show'),3500);
+}
+
+// ===========================================================================
+// BATCH OPERATIONS PAGE
+// ===========================================================================
+
+let _batchAllBooks  = [];    // full list fetched once
+let _batchFiltered  = [];    // after search filter
+let _batchSelected  = new Set();
+
+// ---------------------------------------------------------------------------
+// Page navigation
+// ---------------------------------------------------------------------------
+
+function showBatch() {
+  document.getElementById('library-page').classList.add('hidden');
+  document.getElementById('settings-page').classList.remove('active');
+  document.getElementById('batch-page').classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  // Pre-load selection from library if any
+  if (libSelection.size > 0) {
+    _batchSelected = new Set(libSelection);
+  }
+  _initBatchPage();
+}
+
+function _initBatchPage() {
+  loadBatchBooks();
+  _populateBatchSources();
+}
+
+// ---------------------------------------------------------------------------
+// Source dropdown
+// ---------------------------------------------------------------------------
+
+async function _populateBatchSources() {
+  try {
+    const sources = await api('/metadata/sources');
+    const sel = document.getElementById('batch-source');
+    if (!sel) return;
+    sel.innerHTML = sources
+      .filter(s => s.enabled)
+      .map(s => {
+        const warn = s.requires_key && !s.key_set ? ' ⚠' : '';
+        return `<option value="${s.id}">${esc(s.label)}${warn}</option>`;
+      }).join('');
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Section toggle
+// ---------------------------------------------------------------------------
+
+function toggleBatchSection(name) {
+  const body    = document.getElementById(name + '-body');
+  const toggle  = document.getElementById(name + '-toggle');
+  if (!body) return;
+  const collapsed = body.classList.toggle('collapsed');
+  if (toggle) toggle.style.transform = collapsed ? 'rotate(-90deg)' : '';
+}
+
+// ---------------------------------------------------------------------------
+// Book selector
+// ---------------------------------------------------------------------------
+
+async function loadBatchBooks() {
+  const cat   = document.getElementById('batch-filter-cat')?.value   || '';
+  const meta  = document.getElementById('batch-filter-meta')?.value  || '';
+
+  const params = new URLSearchParams({ limit: 1000, sort: 'series' });
+  if (cat) params.set('category', cat);
+
+  try {
+    let books = await api(`/books?${params}`);
+
+    // Apply meta filter
+    if (meta === 'no_meta') {
+      // Books with no metadata_cache rows at all — we don't know without querying each
+      // For now: show all and let the operation itself skip/handle
+    } else if (meta === 'has_pinned') {
+      // We'd need extra info — show all for now, batch op handles skip_existing
+    }
+
+    _batchAllBooks = books;
+    filterBatchBooks();
+  } catch { _batchAllBooks = []; filterBatchBooks(); }
+}
+
+function filterBatchBooks() {
+  const q = (document.getElementById('batch-search')?.value || '').toLowerCase();
+  _batchFiltered = q
+    ? _batchAllBooks.filter(b =>
+        (b.title||'').toLowerCase().includes(q) ||
+        (b.series||'').toLowerCase().includes(q))
+    : [..._batchAllBooks];
+  _renderBatchBooks();
+}
+
+function _renderBatchBooks() {
+  const el = document.getElementById('batch-book-list');
+  if (!el) return;
+
+  if (!_batchFiltered.length) {
+    el.innerHTML = '<div class="book-check-item" style="color:var(--muted)">No books found</div>';
+    _updateSelCount();
+    return;
+  }
+
+  el.innerHTML = _batchFiltered.map(b => {
+    const checked = _batchSelected.has(b.id) ? 'checked' : '';
+    const sub     = b.series
+      ? `${esc(b.series)}${b.volume != null ? ` T${String(b.volume).padStart(2,'0')}` : ''}`
+      : '';
+    return `<div class="book-check-item" onclick="toggleBatchBook(${b.id}, this)">
+      <input type="checkbox" ${checked} onclick="event.stopPropagation();toggleBatchBook(${b.id},this.parentElement)">
+      <span class="book-check-label">${esc(b.title)}</span>
+      ${sub ? `<span class="book-check-sub">${sub}</span>` : ''}
+    </div>`;
+  }).join('');
+  _updateSelCount();
+}
+
+function toggleBatchBook(id, rowEl) {
+  if (_batchSelected.has(id)) {
+    _batchSelected.delete(id);
+    rowEl.querySelector('input').checked = false;
+    rowEl.style.background = '';
+  } else {
+    _batchSelected.add(id);
+    rowEl.querySelector('input').checked = true;
+    rowEl.style.background = 'rgba(123,97,255,.08)';
+  }
+  _updateSelCount();
+}
+
+function selectAllBatch() {
+  _batchFiltered.forEach(b => _batchSelected.add(b.id));
+  _renderBatchBooks();
+}
+function selectNoneBatch() {
+  _batchSelected.clear();
+  _renderBatchBooks();
+}
+function invertBatchSelection() {
+  _batchFiltered.forEach(b => {
+    if (_batchSelected.has(b.id)) _batchSelected.delete(b.id);
+    else _batchSelected.add(b.id);
+  });
+  _renderBatchBooks();
+}
+
+function _updateSelCount() {
+  const el = document.getElementById('sel-count');
+  if (el) el.textContent = `— ${_batchSelected.size} selected`;
+}
+
+function _getSelectedIds() {
+  return [..._batchSelected];
+}
+
+// ---------------------------------------------------------------------------
+// Batch scrape
+// ---------------------------------------------------------------------------
+
+async function runBatchScrape() {
+  const ids = _getSelectedIds();
+  if (!ids.length) { toast('Select at least one book first', 'err'); return; }
+
+  const btn = document.getElementById('btn-batch-scrape');
+  btn.disabled = true;
+
+  const body = {
+    book_ids:      ids,
+    source:        document.getElementById('batch-source')?.value,
+    auto_pin:      document.getElementById('batch-auto-pin')?.checked ?? true,
+    min_score:     parseFloat(document.getElementById('batch-min-score')?.value) || 0,
+    skip_existing: document.getElementById('batch-skip-existing')?.checked ?? true,
+    query_field:   document.getElementById('batch-query-field')?.value || 'series',
+  };
+
+  _resetBatchUI('scrape');
+  document.getElementById('scrape-log').classList.add('visible');
+  document.getElementById('scrape-progress').classList.add('visible');
+
+  const resp = await fetch('/batch/metadata/fetch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await _runBatchSSE(resp, 'scrape', ids.length);
+  btn.disabled = false;
+  loadStats();
+}
+
+// ---------------------------------------------------------------------------
+// Batch apply
+// ---------------------------------------------------------------------------
+
+async function runBatchApply() {
+  const ids = _getSelectedIds();
+  if (!ids.length) { toast('Select at least one book first', 'err'); return; }
+
+  const btn = document.getElementById('btn-batch-apply');
+  btn.disabled = true;
+
+  const fields = [...document.querySelectorAll('.apply-field:checked')].map(el => el.value);
+  if (!fields.length) { toast('Select at least one field to apply', 'err'); btn.disabled=false; return; }
+
+  const body = {
+    book_ids:     ids,
+    fields,
+    pinned_only:  document.getElementById('apply-pinned-only')?.checked ?? true,
+  };
+
+  _resetBatchUI('apply');
+  document.getElementById('apply-log').classList.add('visible');
+  document.getElementById('apply-progress').classList.add('visible');
+
+  const resp = await fetch('/batch/metadata/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await _runBatchSSE(resp, 'apply', ids.length);
+  btn.disabled = false;
+  loadBooks(); loadStats();
+}
+
+// ---------------------------------------------------------------------------
+// Batch field edit
+// ---------------------------------------------------------------------------
+
+function addEditField() {
+  const container = document.getElementById('edit-fields-list');
+  const ALL_FIELDS = [
+    ['series',    'Series',     'text'],
+    ['language',  'Language',   'text'],
+    ['publisher', 'Publisher',  'text'],
+    ['year',      'Year',       'number'],
+    ['category',  'Category',   'select:manga,comics,book,unknown'],
+    ['country',   'Country',    'text'],
+    ['pub_status','Pub. status','text'],
+    ['title',     'Title',      'text'],
+    ['volume',    'Volume',     'number'],
+    ['score',     'Score',      'number'],
+  ];
+
+  const rowId = 'ef-' + Date.now();
+  const row   = document.createElement('div');
+  row.className = 'edit-field-row';
+  row.id        = rowId;
+
+  const optionsHtml = ALL_FIELDS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+
+  row.innerHTML = `
+    <select class="edit-key-sel" onchange="_updateEditFieldInput('${rowId}', this.value)">
+      ${optionsHtml}
+    </select>
+    <input class="edit-value" type="text" placeholder="Value…">
+    <button onclick="document.getElementById('${rowId}').remove()">✕</button>`;
+  container.appendChild(row);
+}
+
+function _updateEditFieldInput(rowId, field) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+
+  // Always target the value element by its class, never by tag position
+  const current = row.querySelector('.edit-value');
+  if (!current) return;
+
+  const typeMap = {
+    year:     'number',
+    volume:   'number',
+    score:    'number',
+    category: 'select:manga,comics,book,unknown',
+  };
+  const t = typeMap[field] || 'text';
+
+  if (t.startsWith('select:')) {
+    // Replace input with a <select>
+    const opts = t.slice(7).split(',').map(v => `<option value="${v}">${v}</option>`).join('');
+    const sel  = document.createElement('select');
+    sel.className = 'edit-value';
+    sel.innerHTML = opts;
+    current.replaceWith(sel);
+  } else {
+    // Ensure it's an input (not a leftover select from a previous category choice)
+    if (current.tagName === 'SELECT') {
+      const inp = document.createElement('input');
+      inp.className   = 'edit-value';
+      inp.type        = t;
+      inp.placeholder = 'Value…';
+      current.replaceWith(inp);
+    } else {
+      current.type        = t;
+      current.placeholder = 'Value…';
+      current.value       = '';
+    }
+  }
+}
+
+function _collectEditFields() {
+  const rows  = document.querySelectorAll('.edit-field-row');
+  const edits = {};
+  rows.forEach(row => {
+    const keyEl = row.querySelector('.edit-key-sel');
+    const valEl = row.querySelector('.edit-value');
+    if (!keyEl || !valEl) return;
+    const key = keyEl.value;
+    const raw = valEl.value.trim();
+    if (!raw) return;
+    edits[key] = ['year', 'volume', 'score'].includes(key) ? Number(raw) : raw;
+  });
+  return edits;
+}
+
+async function previewBatchEdit() {
+  const ids   = _getSelectedIds();
+  const edits = _collectEditFields();
+  if (!ids.length) { toast('Select books first', 'err'); return; }
+  if (!Object.keys(edits).length) { toast('Add at least one field to edit', 'err'); return; }
+
+  try {
+    const preview = await api('/batch/preview', {
+      method: 'POST', body: { book_ids: ids, edits },
+    });
+    const el = document.getElementById('edit-preview');
+    el.style.display = 'block';
+    if (!preview.items.length) {
+      el.innerHTML = '<span style="color:var(--muted)">No changes to make</span>'; return;
+    }
+    el.innerHTML = preview.items.map(item => {
+      const changes = Object.entries(item.changes)
+        .map(([k, c]) => `<span style="color:var(--muted)">${esc(k)}:</span> ${esc(String(c.from))} → <strong style="color:var(--accent2)">${esc(String(c.to))}</strong>`)
+        .join('&emsp;');
+      return `<div style="padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.05)">
+        <span style="font-weight:600">${esc(item.series || item.title || '#'+item.id)}</span>
+        &nbsp; ${changes}</div>`;
+    }).join('');
+  } catch (e) { toast(`Preview failed: ${e.message}`, 'err'); }
+}
+
+async function runBatchEdit() {
+  const ids   = _getSelectedIds();
+  const edits = _collectEditFields();
+  if (!ids.length) { toast('Select books first', 'err'); return; }
+  if (!Object.keys(edits).length) { toast('Add at least one field to edit', 'err'); return; }
+  if (!confirm(`Apply edits to ${ids.length} book(s)?`)) return;
+
+  const btn = document.getElementById('btn-batch-edit');
+  btn.disabled = true;
+  _resetBatchUI('edit');
+  document.getElementById('edit-log').classList.add('visible');
+  document.getElementById('edit-progress').classList.add('visible');
+
+  const resp = await fetch('/batch/metadata/edit', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_ids: ids, edits }),
+  });
+  await _runBatchSSE(resp, 'edit', ids.length);
+  btn.disabled = false;
+  loadBooks(); loadStats();
+}
+
+// ---------------------------------------------------------------------------
+// Batch delete
+// ---------------------------------------------------------------------------
+
+async function runBatchDelete() {
+  const ids = _getSelectedIds();
+  if (!ids.length) { toast('Select books first', 'err'); return; }
+  const keep = document.getElementById('del-keep-manual')?.checked ?? true;
+  const msg  = keep
+    ? `Delete scraped metadata for ${ids.length} book(s)? Manual entries will be kept.`
+    : `Delete ALL metadata (including manual) for ${ids.length} book(s)?`;
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('btn-batch-del');
+  btn.disabled = true;
+  _resetBatchUI('del');
+  document.getElementById('del-log').classList.add('visible');
+  document.getElementById('del-progress').classList.add('visible');
+
+  const resp = await fetch('/batch/metadata/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ book_ids: ids, keep_manual: keep }),
+  });
+  await _runBatchSSE(resp, 'del', ids.length);
+  btn.disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// SSE runner (shared)
+// ---------------------------------------------------------------------------
+
+async function _runBatchSSE(resp, prefix, total) {
+  const logEl  = document.getElementById(prefix + '-log');
+  const barEl  = document.getElementById(prefix + '-progress-bar');
+  const sumEl  = document.getElementById(prefix + '-summary');
+
+  if (!resp.body) { if (logEl) logEl.textContent += 'Streaming not supported\n'; return; }
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let buf      = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n'); buf = parts.pop();
+
+    for (const part of parts) {
+      const dataLine  = part.split('\n').find(l => l.startsWith('data:'));
+      const eventLine = part.split('\n').find(l => l.startsWith('event:'));
+      if (!dataLine) continue;
+
+      const raw  = dataLine.slice(5).trim();
+      const evt  = eventLine ? eventLine.slice(6).trim() : 'log';
+      let payload;
+      try { payload = JSON.parse(raw); } catch { payload = { msg: raw }; }
+
+      if (evt === 'progress' && barEl) {
+        const pct = total ? Math.round((payload.done / total) * 100) : 0;
+        barEl.style.width = pct + '%';
+      } else if (evt === 'log' && logEl) {
+        const color = payload.level === 'error' ? '\x1b[31m'
+                    : payload.level === 'warn'  ? '\x1b[33m' : '';
+        logEl.textContent += (payload.msg || '') + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      } else if (evt === 'done' && sumEl) {
+        const s = payload;
+        sumEl.textContent =
+          `✓ Done — ${s.ok ?? ''} ok${s.skipped != null ? `, ${s.skipped} skipped` : ''}${s.failed ? `, ${s.failed} failed` : ''}`;
+        sumEl.classList.add('visible');
+        if (barEl) barEl.style.width = '100%';
+        toast('Batch operation complete', 'ok');
+      } else if (evt === 'error' && logEl) {
+        logEl.textContent += `✗ ${payload.msg}\n`;
+        toast(`Error: ${payload.msg}`, 'err');
+      }
+    }
+  }
+}
+
+function _resetBatchUI(prefix) {
+  const logEl = document.getElementById(prefix + '-log');
+  const barEl = document.getElementById(prefix + '-progress-bar');
+  const sumEl = document.getElementById(prefix + '-summary');
+  if (logEl) { logEl.textContent = ''; logEl.classList.remove('visible'); }
+  if (barEl) { barEl.style.width = '0%'; }
+  if (sumEl) { sumEl.textContent = ''; sumEl.classList.remove('visible'); }
+  const progEl = document.getElementById(prefix + '-progress');
+  if (progEl) progEl.classList.remove('visible');
 }

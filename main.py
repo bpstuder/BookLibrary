@@ -75,6 +75,7 @@ from routers.books import router as books_router
 from routers.config import router as config_router
 from routers.library import router as library_router
 from routers.metadata import router as metadata_router
+from routers.batch import router as batch_router
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR   = Path(__file__).parent / "static"
@@ -144,6 +145,7 @@ def create_app(debug: bool = False) -> FastAPI:
     _app.include_router(books_router)
     _app.include_router(library_router)
     _app.include_router(metadata_router)
+    _app.include_router(batch_router)
     _app.include_router(config_router)
 
     if debug:

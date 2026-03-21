@@ -182,6 +182,7 @@ def delete_metadata(book_id: int, metadata_id: int) -> None:
 def save_manual(book_id: int, data: dict) -> dict:
     """
     Create or update the 'manual' metadata row.
+    Also syncs title/series/volume to the books table if provided.
     Returns the saved row as a dict.
     """
     with get_conn() as conn:
@@ -199,6 +200,20 @@ def save_manual(book_id: int, data: dict) -> dict:
     row = _build_db_row(book_id, "manual", current, is_manual=True)
     row["is_pinned"] = current.get("is_pinned", False)
     _upsert_row(row)
+
+    # Sync book-table fields (title, series, volume) automatically
+    # so the main list/table always reflects manual metadata
+    book_sync: dict[str, Any] = {}
+    for field in ("title", "series", "volume"):
+        if field in data and data[field] is not None:
+            book_sync[field] = data[field]
+    if book_sync:
+        set_clause = ", ".join(f"{k} = ?" for k in book_sync)
+        with get_conn() as conn:
+            conn.execute(
+                f"UPDATE books SET {set_clause}, date_updated = datetime('now') WHERE id = ?",
+                [*book_sync.values(), book_id],
+            )
 
     storage = cfg.get("metadata_storage", "db")
     if storage in ("file", "both"):

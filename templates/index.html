@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manga Collection</title>
+<title>BookLibrary</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/favicon-192.png">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -244,7 +247,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 .field-row-2 { display:flex; gap:.6rem; }
 .field-row-2 > * { flex:1; }
 
-/* Standardizer log */
+/* Conversion log */
 .std-log { background:#0a0a0e; border-radius:8px; padding:.65rem .75rem; font-family:monospace;
   font-size:.76rem; max-height:200px; overflow-y:auto; color:#7dff9e;
   line-height:1.55; white-space:pre-wrap; }
@@ -338,12 +341,97 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 .empty { display:flex; flex-direction:column; align-items:center; justify-content:center;
   padding:4rem 1rem; color:var(--muted); gap:.65rem; }
 .empty-icon { font-size:2.8rem; }
+/* Batch page */
+#batch-page { display:none; }
+#batch-page.active { display:block; }
+.batch-section { background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); overflow:hidden; margin-bottom:1rem; }
+.batch-section-header { padding:.75rem 1.1rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:.5rem; cursor:pointer; user-select:none; }
+.batch-section-header:hover { background:var(--surface2); }
+.batch-section-title { font-weight:700; font-size:.92rem; flex:1; }
+.batch-section-toggle { color:var(--muted); font-size:.8rem; transition:transform .15s; }
+.batch-section-body { padding:1rem 1.1rem; display:flex; flex-direction:column; gap:.8rem; }
+.batch-section-body.collapsed { display:none; }
+.book-selector { background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; max-height:220px; overflow-y:auto; }
+.book-selector-toolbar { padding:.35rem .65rem; border-bottom:1px solid var(--border);
+  display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.book-selector-toolbar input { flex:1; min-width:100px; padding:.25rem .5rem;
+  background:var(--surface); border:1px solid var(--border); border-radius:5px;
+  color:var(--text); font-size:.78rem; }
+.book-check-item { display:flex; align-items:center; gap:.5rem; padding:.3rem .65rem;
+  border-bottom:1px solid rgba(46,46,58,.4); cursor:pointer; font-size:.82rem; }
+.book-check-item:hover { background:rgba(123,97,255,.07); }
+.book-check-item input[type=checkbox] { accent-color:var(--accent); flex-shrink:0; }
+.book-check-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.book-check-sub { font-size:.7rem; color:var(--muted); flex-shrink:0; }
+.batch-log { background:#0a0a0e; border-radius:8px; padding:.6rem .75rem; font-family:monospace;
+  font-size:.75rem; max-height:220px; overflow-y:auto; color:#7dff9e;
+  line-height:1.55; white-space:pre-wrap; display:none; }
+.batch-log.visible { display:block; }
+.batch-progress { height:5px; background:var(--surface3); border-radius:3px;
+  overflow:hidden; margin-top:.4rem; display:none; }
+.batch-progress.visible { display:block; }
+.batch-progress-bar { height:100%; background:var(--accent); transition:width .25s; }
+.batch-summary { padding:.5rem .75rem; border-radius:7px; font-size:.82rem;
+  background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:var(--green);
+  display:none; margin-top:.4rem; }
+.batch-summary.visible { display:block; }
+.edit-fields-list { display:flex; flex-direction:column; gap:.4rem; }
+.edit-field-row { display:flex; gap:.4rem; align-items:center; }
+.edit-field-row select, .edit-field-row input { padding:.32rem .55rem; background:var(--surface2);
+  border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:.82rem; }
+.edit-field-row select { width:140px; flex-shrink:0; }
+.edit-field-row input { flex:1; }
+.edit-field-row button { padding:.28rem .55rem; background:none; border:1px solid var(--border);
+  border-radius:6px; cursor:pointer; color:var(--red); font-size:.78rem; }
+/* Selection mode */
+#select-bar { display:none; position:fixed; bottom:1.5rem; left:50%;
+  transform:translateX(-50%); background:var(--surface); border:1px solid var(--accent);
+  border-radius:12px; padding:.6rem 1rem; display:none; align-items:center; gap:.75rem;
+  z-index:50; box-shadow:0 4px 32px rgba(0,0,0,.5); white-space:nowrap; flex-wrap:wrap;
+  max-width:calc(100vw - var(--sidebar) - 3rem); }
+#select-bar.visible { display:flex; }
+#select-bar-count { font-weight:700; font-size:.88rem; color:var(--accent2); min-width:80px; }
+.sel-mode .book-card  { cursor:default; }
+.sel-mode .book-card:hover  { transform:none; }
+.sel-mode .book-row   { cursor:default; }
+.sel-mode #book-table tr { cursor:default; }
+/* checkbox overlay on grid cards */
+.book-card-check { position:absolute; top:.4rem; left:.4rem; z-index:2;
+  width:18px; height:18px; accent-color:var(--accent); cursor:pointer;
+  opacity:0; transition:opacity .12s; }
+.sel-mode .book-card-check { opacity:1; }
+.book-card.sel-checked { border-color:var(--accent); background:rgba(123,97,255,.1); }
+.book-card.sel-checked .book-card-check { opacity:1; }
+/* checkbox on list rows */
+.row-check { width:16px; height:16px; accent-color:var(--accent); flex-shrink:0;
+  cursor:pointer; display:none; }
+.sel-mode .row-check  { display:block; }
+/* select-mode toggle button */
+.vbtn-sel { padding:.3rem .55rem; border:none; background:none; cursor:pointer;
+  color:var(--muted); border-radius:6px; font-size:.88rem; transition:all .12s; }
+.vbtn-sel.active { background:rgba(123,97,255,.15); color:var(--accent2); }
+/* Info tab metadata display */
+.info-meta-field { display:flex; gap:.5rem; padding:.3rem 0;
+  border-bottom:1px solid rgba(46,46,58,.4); align-items:baseline; }
+.info-meta-field:last-of-type { border-bottom:none; }
+.info-meta-key { font-size:.72rem; color:var(--muted); min-width:90px;
+  flex-shrink:0; text-transform:uppercase; letter-spacing:.05em; font-weight:600; }
+.info-meta-val { font-size:.85rem; line-height:1.45; }
+.info-meta-synopsis { font-size:.83rem; line-height:1.6; color:var(--muted);
+  padding:.5rem 0; border-bottom:1px solid rgba(46,46,58,.4); margin-bottom:.4rem; }
+.info-meta-source { font-size:.68rem; color:var(--muted); margin-top:.6rem;
+  display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+.info-meta-cover { float:right; margin:0 0 .5rem .85rem;
+  width:72px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
 </style>
 </head>
 <body>
 
 <nav id="sidebar">
-  <div class="logo">📚 Collection<span>manga · comics · ebooks</span></div>
+  <div class="logo">📚 BookLibrary<span>manga · comics · ebooks</span></div>
   <div class="nav-section">Browse</div>
   <div class="nav-item active" data-view="all"     onclick="setView('all')">    <span class="nav-icon">🏠</span> All books</div>
   <div class="nav-item"        data-view="series"  onclick="setView('series')"> <span class="nav-icon">📚</span> By series</div>
@@ -356,6 +444,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
   <div class="nav-item"        data-view="read"    onclick="setView('read')">   <span class="nav-icon">✅</span> Finished</div>
   <div class="sidebar-bottom">
     <button class="scan-btn"     onclick="triggerScan()">⟳ Scan library</button>
+    <button class="settings-btn" onclick="showBatch()"   style="margin-bottom:.25rem">⚡ Batch operations</button>
     <button class="settings-btn" onclick="showSettings()">⚙ Settings</button>
   </div>
 </nav>
@@ -386,7 +475,23 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
         <button class="view-btn active" id="vbtn-grid"  onclick="switchLayout('grid')" title="Grid">⊞</button>
         <button class="view-btn"        id="vbtn-list"  onclick="switchLayout('list')" title="List">☰</button>
         <button class="view-btn"        id="vbtn-table" onclick="switchLayout('table')" title="Table">⊟</button>
+        <button class="vbtn-sel"        id="vbtn-sel"   onclick="toggleSelectMode()" title="Select books">☑</button>
       </div>
+    </div>
+
+    <!-- Floating selection action bar -->
+    <div id="select-bar">
+      <span id="select-bar-count">0 selected</span>
+      <button class="btn btn-ghost btn-sm" onclick="libSelectAll()">All</button>
+      <button class="btn btn-ghost btn-sm" onclick="libSelectNone()">None</button>
+      <button class="btn btn-ghost btn-sm" onclick="libInvertSel()">Invert</button>
+      <div style="width:1px;height:20px;background:var(--border)"></div>
+      <button class="btn btn-primary btn-sm" onclick="libBatchScrape()">🔍 Scrape</button>
+      <button class="btn btn-success btn-sm" onclick="libBatchApply()">✓ Apply meta</button>
+      <button class="btn btn-warning btn-sm" onclick="libBatchEdit()">✏️ Edit fields</button>
+      <button class="btn btn-primary btn-sm" onclick="libBatchWebp()">⚡ Convert WebP</button>
+      <button class="btn btn-danger  btn-sm" onclick="libBatchDelete()">🗑 Delete meta</button>
+      <button class="btn btn-ghost   btn-sm" onclick="toggleSelectMode()">✕ Cancel</button>
     </div>
     <div id="book-grid"></div>
     <div id="book-list"       style="display:none"></div>
@@ -403,6 +508,9 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
     <div class="page-title"><span>⚙</span> Settings
       <button class="btn btn-ghost" style="margin-left:auto;font-size:.78rem" onclick="showLibrary()">← Back</button>
     </div>
+    <div id="env-locked-notice" style="display:none;background:rgba(245,158,11,.1);
+      border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:.6rem .9rem;
+      font-size:.8rem;color:var(--amber);margin-bottom:1rem"></div>
     <div class="settings-grid">
 
       <div class="settings-card">
@@ -438,7 +546,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 
       <div class="settings-card">
         <div class="settings-card-header"><span>🔧</span><div>
-          <div class="settings-card-title">CBZ Standardizer defaults</div>
+          <div class="settings-card-title">CBZ Conversion defaults</div>
           <div class="settings-card-desc">Default parameters used in the book panel</div>
         </div></div>
         <div class="settings-card-body">
@@ -456,7 +564,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
             </div>
           </div>
           <div class="field-row centered">
-            <div class="field-label"><strong>Delete original</strong><small>Remove source CBZ after standardize</small></div>
+            <div class="field-label"><strong>Delete original</strong><small>Remove source CBZ after conversion</small></div>
             <div class="field-control"><div class="s-checkbox-row">
               <input type="checkbox" id="cfg-std-delete"><label for="cfg-std-delete">Delete original file</label>
             </div></div>
@@ -593,6 +701,158 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
       </div>
     </div>
   </div>
+  <!-- ── Batch operations page ── -->
+  <div id="batch-page">
+    <div class="page-title"><span>⚡</span> Batch operations
+      <button class="btn btn-ghost" style="margin-left:auto;font-size:.78rem" onclick="showLibrary()">← Back</button>
+    </div>
+
+    <!-- Shared book selector -->
+    <div class="batch-section">
+      <div class="batch-section-header" onclick="toggleBatchSection('sel')">
+        <span class="batch-section-title">📚 Book selection
+          <span class="sel-count" id="sel-count">— 0 selected</span>
+        </span>
+        <span class="batch-section-toggle" id="sel-toggle">▼</span>
+      </div>
+      <div class="batch-section-body" id="sel-body">
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+          <select class="s-select" id="batch-filter-cat" style="width:auto" onchange="loadBatchBooks()">
+            <option value="">All categories</option>
+            <option value="manga">Manga</option>
+            <option value="comics">Comics</option>
+            <option value="book">Books</option>
+          </select>
+          <select class="s-select" id="batch-filter-meta" style="width:auto" onchange="loadBatchBooks()">
+            <option value="">All</option>
+            <option value="no_meta">No metadata</option>
+            <option value="no_pinned">No pinned result</option>
+            <option value="has_pinned">Has pinned result</option>
+          </select>
+          <input class="s-input" id="batch-search" placeholder="Filter by title / series…"
+            style="width:180px" oninput="filterBatchBooks()">
+          <button class="btn btn-ghost btn-sm" onclick="selectAllBatch()">Select all</button>
+          <button class="btn btn-ghost btn-sm" onclick="selectNoneBatch()">None</button>
+          <button class="btn btn-ghost btn-sm" onclick="invertBatchSelection()">Invert</button>
+        </div>
+        <div class="book-selector" id="batch-book-list">
+          <div class="book-check-item" style="color:var(--muted);font-style:italic">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scrape -->
+    <div class="batch-section">
+      <div class="batch-section-header" onclick="toggleBatchSection('scrape')">
+        <span class="batch-section-title">🔍 Scrape metadata</span>
+        <span class="batch-section-toggle" id="scrape-toggle">▼</span>
+      </div>
+      <div class="batch-section-body" id="scrape-body">
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+          <select class="s-select" id="batch-source" style="width:auto">
+          </select>
+          <select class="s-select" id="batch-query-field" style="width:auto">
+            <option value="series">Query = series name</option>
+            <option value="title">Query = title</option>
+          </select>
+          <label class="toggle-label" style="gap:.3rem">
+            <input type="checkbox" id="batch-auto-pin" checked> Auto-pin best result
+          </label>
+          <label class="toggle-label" style="gap:.3rem">
+            <input type="checkbox" id="batch-skip-existing" checked> Skip already pinned
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <span style="font-size:.78rem;color:var(--muted)">Min score to auto-pin:</span>
+          <input type="number" id="batch-min-score" value="0" min="0" max="10" step="0.5"
+            style="width:60px;padding:.3rem .45rem;background:var(--surface2);
+            border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.82rem">
+          <span style="font-size:.72rem;color:var(--muted)">/10 &nbsp;(0 = always pin first result)</span>
+        </div>
+        <button class="btn btn-primary" onclick="runBatchScrape()" id="btn-batch-scrape">▶ Start scrape</button>
+        <div class="batch-progress" id="scrape-progress"><div class="batch-progress-bar" id="scrape-progress-bar" style="width:0%"></div></div>
+        <div class="batch-log" id="scrape-log"></div>
+        <div class="batch-summary" id="scrape-summary"></div>
+      </div>
+    </div>
+
+    <!-- Apply pinned -->
+    <div class="batch-section">
+      <div class="batch-section-header" onclick="toggleBatchSection('apply')">
+        <span class="batch-section-title">✓ Apply pinned metadata → books</span>
+        <span class="batch-section-toggle" id="apply-toggle">▼</span>
+      </div>
+      <div class="batch-section-body" id="apply-body">
+        <div style="font-size:.8rem;color:var(--muted)">
+          Copy fields from each book's pinned metadata row into the book record.
+        </div>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="title"    checked> Title</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="series"   checked> Series</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="synopsis" checked> Synopsis</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="authors"  checked> Authors</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="genres"   checked> Genres</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="year"     checked> Year</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="publisher"> Publisher</label>
+          <label class="meta-check"><input type="checkbox" class="apply-field" value="language"> Language</label>
+        </div>
+        <label class="toggle-label" style="gap:.3rem">
+          <input type="checkbox" id="apply-pinned-only" checked>
+          Only apply if a pinned result exists (skip others)
+        </label>
+        <button class="btn btn-success" onclick="runBatchApply()" id="btn-batch-apply">✓ Apply to selected books</button>
+        <div class="batch-progress" id="apply-progress"><div class="batch-progress-bar" id="apply-progress-bar" style="width:0%"></div></div>
+        <div class="batch-log" id="apply-log"></div>
+        <div class="batch-summary" id="apply-summary"></div>
+      </div>
+    </div>
+
+    <!-- Field edit -->
+    <div class="batch-section">
+      <div class="batch-section-header" onclick="toggleBatchSection('edit')">
+        <span class="batch-section-title">✏️ Edit fields in bulk</span>
+        <span class="batch-section-toggle" id="edit-toggle">▼</span>
+      </div>
+      <div class="batch-section-body" id="edit-body">
+        <div style="font-size:.8rem;color:var(--muted)">
+          Set one or more fields to the same value for all selected books.
+          Book fields (title, series, category…) update the book record.
+          Other fields (language, publisher…) update the manual metadata row.
+        </div>
+
+        <div class="edit-fields-list" id="edit-fields-list"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addEditField()">+ Add field</button>
+
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.25rem">
+          <button class="btn btn-ghost" onclick="previewBatchEdit()">👁 Preview</button>
+          <button class="btn btn-warning" onclick="runBatchEdit()" id="btn-batch-edit">✏️ Apply edits</button>
+        </div>
+        <div id="edit-preview" style="display:none;margin-top:.5rem;background:var(--surface2);
+          border-radius:7px;padding:.6rem .85rem;font-size:.78rem;max-height:200px;overflow-y:auto"></div>
+        <div class="batch-progress" id="edit-progress"><div class="batch-progress-bar" id="edit-progress-bar" style="width:0%"></div></div>
+        <div class="batch-log" id="edit-log"></div>
+        <div class="batch-summary" id="edit-summary"></div>
+      </div>
+    </div>
+
+    <!-- Delete metadata -->
+    <div class="batch-section">
+      <div class="batch-section-header" onclick="toggleBatchSection('del')">
+        <span class="batch-section-title">🗑 Delete metadata</span>
+        <span class="batch-section-toggle" id="del-toggle">▼</span>
+      </div>
+      <div class="batch-section-body" id="del-body">
+        <label class="toggle-label" style="gap:.3rem">
+          <input type="checkbox" id="del-keep-manual" checked>
+          Keep manually entered metadata (only delete scraped results)
+        </label>
+        <button class="btn btn-danger" onclick="runBatchDelete()" id="btn-batch-del">🗑 Delete for selected books</button>
+        <div class="batch-progress" id="del-progress"><div class="batch-progress-bar" id="del-progress-bar" style="width:0%"></div></div>
+        <div class="batch-log" id="del-log"></div>
+        <div class="batch-summary" id="del-summary"></div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <!-- ── Book modal ── -->
@@ -617,23 +877,26 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
       <div class="modal-tab"        onclick="switchTab('reading')">Reading</div>
       <div class="modal-tab"        onclick="switchTab('tags')">Tags</div>
       <div class="modal-tab"        onclick="switchTab('metadata')">Metadata</div>
-      <div class="modal-tab"        onclick="switchTab('standardize')" id="std-tab">Standardize</div>
+      <div class="modal-tab"        onclick="switchTab('conversion')" id="std-tab">Conversion</div>
       <div class="modal-tab"        onclick="switchTab('move')">Move</div>
     </div>
 
-    <!-- Tab: Info -->
+    <!-- Tab: Info — read-only metadata view + file classification -->
     <div class="modal-panel active" id="tab-info">
-      <div class="field-group"><label>Title</label>
-        <input type="text" id="info-title" placeholder="Title">
-      </div>
-      <div class="field-row-2">
-        <div class="field-group"><label>Series</label>
-          <input type="text" id="info-series" placeholder="Series name">
-        </div>
-        <div class="field-group"><label>Volume</label>
-          <input type="number" id="info-volume" min="0" placeholder="1">
+
+      <!-- Metadata panel (read-only, from best cache row) -->
+      <div id="info-meta-panel">
+        <div style="color:var(--muted);font-size:.8rem;font-style:italic;padding:.5rem 0">
+          No metadata yet — go to the Metadata tab to add some.
         </div>
       </div>
+
+      <!-- Separator -->
+      <div style="border-top:1px solid var(--border);margin:1rem 0"></div>
+
+      <!-- File classification — the only editable part of Info -->
+      <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;
+           color:var(--muted);margin-bottom:.65rem;font-weight:700">File classification</div>
       <div class="field-group"><label>Category</label>
         <div class="cat-row" id="cat-opts"></div>
       </div>
@@ -645,15 +908,9 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
           <option value="unknown">Unknown</option>
         </select>
       </div>
-      <button class="btn btn-primary" onclick="saveInfo()">Save changes</button>
-
-      <!-- Read-only metadata from best cache row -->
-      <div id="info-meta-section" style="margin-top:1.1rem;padding-top:1rem;
-           border-top:1px solid var(--border);display:none">
-        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;
-             color:var(--muted);margin-bottom:.6rem;font-weight:700">Saved metadata</div>
-        <div id="info-meta-content"></div>
-      </div>
+      <button class="btn btn-ghost btn-sm" onclick="saveFileClass()" style="margin-top:.25rem">
+        Save classification
+      </button>
     </div>
 
     <!-- Tab: Reading -->
@@ -788,8 +1045,8 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
       </details>
     </div>
 
-    <!-- Tab: Standardize -->
-    <div class="modal-panel" id="tab-standardize">
+    <!-- Tab: Conversion -->
+    <div class="modal-panel" id="tab-conversion">
       <div class="std-controls">
         <label class="toggle-label"><input type="checkbox" id="std-webp"> Convert to WebP</label>
         <label class="toggle-label" style="margin-left:.3rem">Quality
