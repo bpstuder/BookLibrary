@@ -142,8 +142,7 @@ def get_cached(book_id: int, source: str = "all") -> list[dict]:
     # Merge sidecar if storage includes file
     if source not in ("db_only",) and storage in ("file", "both"):
         sidecar = _read_sidecar(book_id)
-        sidecar_sources = {r["source"] for r in sidecar}
-        db_sources      = {r["source"] for r in rows_db}
+        db_sources = {r["source"] for r in rows_db}
         # Add sidecar rows missing from DB
         for r in sidecar:
             if r.get("source") not in db_sources:

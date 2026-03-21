@@ -139,9 +139,18 @@ def migrate_db() -> None:
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    """
+    Context manager for SQLite connections.
+    - WAL mode for better concurrency (readers don't block writers)
+    - 5-second busy timeout to handle concurrent requests gracefully
+    - foreign_keys enforced on every connection
+    - Automatic commit on success, rollback on exception
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")   # faster writes, safe with WAL
     try:
         yield conn
         conn.commit()

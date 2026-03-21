@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+
 from typing import Optional
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import db.config as cfg
 from db.database import get_conn
 from services.metadata import (
     fetch_and_store, get_cached, pin_metadata,

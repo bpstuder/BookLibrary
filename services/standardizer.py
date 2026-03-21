@@ -52,11 +52,13 @@ def standardize_book(
                 log_lines.append(s.rstrip())
         def flush(self): pass
 
+    # NOTE: stdout redirect is not thread-safe under concurrent requests.
+    # Acceptable for now since standardization is user-initiated and slow.
     real_stdout = sys.stdout
     sys.stdout  = _Capture()
 
     def _no_prompt(prompt: str) -> str:
-        log_lines.append(f"  [warn]    Skipping interactive prompt in web mode")
+        log_lines.append("  [warn]    Skipping interactive prompt in web mode")
         return ""
 
     cbz._ask = _no_prompt

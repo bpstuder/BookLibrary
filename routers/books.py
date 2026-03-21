@@ -4,7 +4,6 @@ routers/books.py — CRUD for the book collection.
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
@@ -440,13 +439,20 @@ def _build_move_vars(book: dict, src: "Path") -> dict:
 
 
 def _strip_volume_suffix(title: str) -> str:
-    """Remove trailing volume indicators: 'Dragon Ball T10' → 'Dragon Ball'."""
-    import re as _re
-    t = _re.sub(r'[\s\-_]*[Tt](?:ome|om)?\s*\d+\s*$', '', title)
-    t = _re.sub(r'[\s\-_]*(?:vol|volume|v)\.?\s*\d+\s*$', '', t, flags=_re.IGNORECASE)
+    """
+    Remove trailing volume indicators from a title.
+    Examples:
+      "Dragon Ball Super T10"  → "Dragon Ball Super"
+      "One Piece - T01"        → "One Piece"
+      "Naruto Vol. 5"          → "Naruto"
+    """
+    t = re.sub(r'[\s\-_]*[Tt](?:ome|om)?\s*\d+\s*$', '', title)
+    t = re.sub(r'[\s\-_]*(?:vol|volume|v)\.?\s*\d+\s*$', '', t, flags=re.IGNORECASE)
     return t.strip(" -_") or title
 
+
 def _row_to_book(row) -> BookOut:
+    """Convert a raw SQLite row (with joined metadata columns) to a BookOut model."""
     import json as _json
     d = dict(row)
     d["tags"]     = [t for t in (d.pop("tag_list", "") or "").split(",") if t]

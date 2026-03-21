@@ -1,13 +1,16 @@
-# Web server
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-python-multipart>=0.0.9
+# BookLibrary — Python dependencies
+# Install with: pip install -r requirements.txt
 
-# HTTP client (metadata scraping)
-httpx>=0.27.0
+# ── Core ─────────────────────────────────────────────────────────────────────
+fastapi>=0.110.0        # Web framework
+uvicorn[standard]>=0.27 # ASGI server (includes websockets, httptools)
+pydantic>=2.0           # Data validation and serialization
+httpx>=0.27             # Async HTTP client (metadata scraping)
 
-# Image processing — covers + WebP conversion
-Pillow>=10.3.0
+# ── Optional ─────────────────────────────────────────────────────────────────
+# Uncomment to enable the corresponding features:
 
-# PDF cover extraction (optional — remove if not needed)
-pymupdf>=1.24.0
+# Pillow>=10.0            # WebP image conversion (required for --webp flag)
+# python-dotenv>=1.0      # Richer .env syntax (multiline, comments, quoted values)
+#                         # Falls back to built-in parser if not installed
+# pymupdf>=1.24           # PDF cover extraction (fitz)

@@ -4,7 +4,7 @@ db/models.py — Pydantic schemas used by FastAPI routes.
 
 from __future__ import annotations
 
-from typing import Literal, Optional, Any
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict
 
 

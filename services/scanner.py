@@ -42,8 +42,13 @@ def scan_library(library_path: Path) -> ScanResult:
     errors: list[str] = []
 
     disk_files: dict[str, Path] = {}
-    for root, _, files in os.walk(library_path):
+    for root, dirs, files in os.walk(library_path):
+        # Skip macOS __MACOSX metadata directories
+        dirs[:] = [d for d in dirs if d != "__MACOSX"]
         for fname in files:
+            # Skip macOS AppleDouble sidecar files (._filename)
+            if fname.startswith("._") or fname.startswith("."):
+                continue
             p = Path(root) / fname
             if p.suffix.lower() in SUPPORTED:
                 disk_files[str(p)] = p

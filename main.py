@@ -135,7 +135,7 @@ def create_app(debug: bool = False) -> FastAPI:
         yield
 
     _app = FastAPI(
-        title="Manga Collection",
+        title="BookLibrary",
         version="1.0.0",
         docs_url ="/docs"  if debug else None,
         redoc_url="/redoc" if debug else None,

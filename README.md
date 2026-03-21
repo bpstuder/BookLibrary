@@ -1,182 +1,264 @@
-# Manga Collection
+# BookLibrary
 
-A self-hosted web app to manage your manga, comics, and ebook library.
-
-**Formats:** CBZ · CBR · EPUB · PDF · MOBI · AZW3  
-**Stack:** FastAPI · SQLite · vanilla JS · Docker
-
----
-
-## Features
-
-- **Library scan** — point to any local folder, the app indexes everything automatically
-- **Catalogue** with search, format filters, and sort options
-- **Book detail** — cover, series, volume, reading status, tags
-- **Reading tracker** — Unread / Reading / Read + page progress
-- **Tag system** — add and remove free-form tags per book
-- **Metadata scraping** — fetch synopsis, authors, genres, score from:
-  - [AniList](https://anilist.co) (manga, free GraphQL)
-  - [ComicVine](https://comicvine.gamespot.com/api/) (comics, free key)
-  - [Google Books](https://books.google.com) (ebooks, no key needed)
-- **CBZ Standardizer** built in — flatten, WebP convert, rename to `<Series> - T<XX>.cbz` directly from the book detail panel
-- **Cover extraction** from CBZ, EPUB, and PDF
+A self-hosted web application to manage your manga, comics, and ebook collection.  
+Built with **FastAPI** (Python) + vanilla JavaScript. No external database required — uses SQLite.
 
 ---
 
 ## Quick start
 
-### With Docker (recommended)
-
 ```bash
-# 1. Clone the repo
-git clone https://github.com/<you>/manga-collection.git
-cd manga-collection
-
-# 2. Configure
-cp .env.example .env
-# Edit .env: set LIBRARY_PATH to your manga folder
-
-# 3. Run
-docker compose up -d
-
-# 4. Open
-open http://localhost:8000
-
-# 5. Scan your library (or click "Scan library" in the UI)
-curl -X POST http://localhost:8000/scan
-```
-
-### Without Docker
-
-```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+# 1. Install dependencies
 pip install -r requirements.txt
 
-export LIBRARY_PATH=/path/to/your/manga
-export COMICVINE_API_KEY=your_key_here     # optional
+# 2. Configure your library path
+cp .env.example .env
+# Edit .env: set LIBRARY_PATH=/path/to/your/library
 
+# 3. Start the server
 python main.py
-# → http://localhost:8000
+
+# 4. Open in browser
+open http://localhost:8000
 ```
+
+### Docker
+
+```bash
+docker-compose up -d
+```
+
+The `docker-compose.yml` mounts your library as read-only and persists the database in a named volume.
 
 ---
 
 ## Configuration
 
-All configuration is via environment variables (or `.env` file):
+Settings can be changed in two ways — **environment variables** always take priority over the Settings UI:
 
-| Variable | Default | Description |
-|---|---|---|
-| `LIBRARY_PATH` | `./library` | Path to your manga/comics/ebooks folder |
-| `PORT` | `8000` | HTTP port |
-| `COMICVINE_API_KEY` | _(empty)_ | ComicVine API key — get one free at comicvine.gamespot.com/api |
+| Variable           | Default          | Description                              |
+|--------------------|------------------|------------------------------------------|
+| `LIBRARY_PATH`     | `./library`      | Path to your book folder                 |
+| `PORT`             | `8000`           | HTTP port                                |
+| `DEBUG`            | `false`          | Enable /debug, /docs, auto-reload        |
+| `COMICVINE_API_KEY`| *(empty)*        | ComicVine API key (free at comicvine.com)|
+| `HARDCOVER_API_KEY`| *(empty)*        | Hardcover API key (free at hardcover.app)|
 
----
-
-## Project structure
-
-```
-manga-collection/
-├── main.py                  # FastAPI entry point
-├── cbz_standardize.py       # CBZ pipeline (standalone CLI too)
-│
-├── db/
-│   ├── database.py          # SQLite connection + schema bootstrap
-│   └── models.py            # Pydantic schemas
-│
-├── services/
-│   ├── scanner.py           # Library folder scanner
-│   ├── covers.py            # Cover extraction (CBZ / EPUB / PDF)
-│   ├── metadata.py          # AniList / ComicVine / Google Books scrapers
-│   └── standardizer.py      # CBZ standardizer wrapper (SSE streaming)
-│
-├── routers/
-│   ├── books.py             # CRUD + search + tags + status + stats
-│   ├── library.py           # /scan + /standardize SSE route
-│   └── metadata.py          # /metadata/fetch
-│
-├── templates/
-│   └── index.html           # Single-page app
-├── static/
-│   └── app.js               # Frontend JS (no framework)
-│
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-└── requirements.txt
-```
+All other settings (WebP quality, metadata storage mode, enabled providers…) are managed in the Settings page and persisted in `data/config.json`.
 
 ---
 
-## Database schema
+## REST API
 
-```
-books           — path, title, series, volume, type, file_size, cover_path
-tags            — id, name
-book_tags       — book_id ↔ tag_id
-reading_status  — book_id, status (unread/reading/read), progress, last_read
-metadata_cache  — book_id, source, synopsis, publisher, year, authors, genres, score
-```
+Base URL: `http://localhost:8000`
 
-Data is stored in `data/collection.db` (SQLite). Covers are cached as JPEG thumbnails in `data/covers/`.
+When `DEBUG=true`, interactive API docs are available at `/docs` (Swagger UI) and `/redoc`.
 
----
-
-## API reference
+### Books
 
 | Method | Path | Description |
-|---|---|---|
-| `GET`    | `/books`                          | List/search books |
-| `GET`    | `/books/{id}`                     | Book detail |
-| `PATCH`  | `/books/{id}`                     | Update title/series/volume |
-| `DELETE` | `/books/{id}`                     | Remove from collection |
-| `GET`    | `/books/{id}/cover`               | Serve cover image |
-| `PUT`    | `/books/{id}/status`              | Set reading status |
-| `POST`   | `/books/{id}/tags/{name}`         | Add tag |
-| `DELETE` | `/books/{id}/tags/{name}`         | Remove tag |
-| `GET`    | `/books/{id}/metadata`            | Get cached metadata |
-| `GET`    | `/books/stats/summary`            | Collection statistics |
-| `GET`    | `/books/tags/all`                 | All tags |
-| `POST`   | `/scan`                           | Scan library folder |
-| `POST`   | `/books/{id}/standardize`         | Standardize CBZ (SSE stream) |
-| `POST`   | `/metadata/fetch`                 | Fetch metadata from external API |
+|--------|------|-------------|
+| `GET` | `/books` | List books with filters, sorting, pagination |
+| `GET` | `/books/series` | Group books by series |
+| `GET` | `/books/stats/summary` | Counts by type/category/status |
+| `GET` | `/books/tags/all` | All tags |
+| `GET` | `/books/{id}` | Get one book |
+| `PATCH` | `/books/{id}` | Update book fields (title, series, volume, category, type) |
+| `DELETE` | `/books/{id}` | Remove book from DB |
+| `GET` | `/books/{id}/cover` | Cover thumbnail (JPEG) |
+| `PUT` | `/books/{id}/status` | Set reading status and progress |
+| `POST` | `/books/{id}/tags/{name}` | Add tag |
+| `DELETE` | `/books/{id}/tags/{name}` | Remove tag |
+| `GET` | `/books/{id}/metadata` | List all cached metadata rows |
+| `POST` | `/books/{id}/move` | Move/rename the file |
+| `POST` | `/books/{id}/move/preview` | Preview move without applying |
 
-Query parameters for `GET /books`:
+#### Query parameters for `GET /books`
 
-| Param | Description |
-|---|---|
-| `q` | Full-text search on title/series |
-| `type` | Filter by format: `cbz`, `epub`, `pdf`… |
-| `status` | Filter by reading status |
-| `series` | Filter by series name |
-| `tag` | Filter by tag |
-| `sort` | `title` · `series` · `date_added` · `volume` |
-| `order` | `asc` · `desc` |
-| `limit` / `offset` | Pagination |
+| Parameter  | Type   | Default | Description |
+|------------|--------|---------|-------------|
+| `q`        | string | —       | Full-text search on title and series |
+| `category` | string | —       | Filter: `manga`, `comics`, `book`, `unknown` |
+| `type`     | string | —       | Filter: `cbz`, `cbr`, `epub`, `pdf`, `mobi`, `azw3` |
+| `status`   | string | —       | Filter: `unread`, `reading`, `read` |
+| `series`   | string | —       | Filter by series name (partial match) |
+| `tag`      | string | —       | Filter by tag name |
+| `sort`     | string | `title` | Sort field: `title`, `series`, `date_added`, `volume` |
+| `order`    | string | `asc`   | `asc` or `desc` |
+| `limit`    | int    | `50`    | Max results (≤ 500) |
+| `offset`   | int    | `0`     | Pagination offset |
 
----
+### Metadata
 
-## CBZ Standardizer (standalone)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/metadata/sources` | List providers with enabled/key status |
+| `GET` | `/metadata/{book_id}` | All cached rows for a book |
+| `POST` | `/metadata/fetch` | Scrape from a provider |
+| `POST` | `/metadata/{book_id}/pin/{id}` | Pin result as canonical |
+| `POST` | `/metadata/{book_id}/apply/{id}` | Copy fields to book record |
+| `PUT` | `/metadata/{book_id}/manual` | Save manual metadata |
+| `DELETE` | `/metadata/{book_id}/{id}` | Delete one row |
+| `DELETE` | `/metadata/{book_id}` | Delete all rows for book |
 
-`cbz_standardize.py` works independently as a CLI tool:
+#### `POST /metadata/fetch` body
 
-```bash
-python cbz_standardize.py ./manga/ --webp --webp-quality 80
+```json
+{
+  "book_id": 42,
+  "source": "anilist",
+  "query": "Dragon Ball Super"
+}
 ```
 
-See [cbz_standardize.py](cbz_standardize.py) for full documentation.
+Sources: `anilist`, `comicvine`, `googlebooks`, `hardcover`, `openlib`
+
+### Library
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/scan` | Scan library folder, sync DB |
+| `POST` | `/books/{id}/standardize` | Convert CBZ/CBR (SSE stream) |
+
+#### `POST /books/{id}/standardize` body
+
+```json
+{
+  "webp": true,
+  "webp_quality": 85,
+  "delete_old": false
+}
+```
+
+Response is a **Server-Sent Events** stream:
+```
+event: log
+data: [flatten]  page001.jpg → page001.jpg
+
+event: done
+data: /path/to/converted.cbz
+```
+
+### Batch operations
+
+All batch endpoints stream progress via SSE.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/batch/metadata/fetch` | Scrape metadata for multiple books |
+| `POST` | `/batch/metadata/apply` | Apply pinned metadata to books table |
+| `POST` | `/batch/metadata/edit` | Set field values on multiple books |
+| `POST` | `/batch/metadata/delete` | Delete metadata for multiple books |
+| `POST` | `/batch/preview` | Dry-run preview of batch edit |
+| `POST` | `/batch/convert/webp` | Convert multiple CBZ/CBR files to WebP |
+
+#### `POST /batch/metadata/fetch` body
+
+```json
+{
+  "book_ids": [1, 2, 3],
+  "source": "anilist",
+  "auto_pin": true,
+  "min_score": 6.0,
+  "skip_existing": true,
+  "query_field": "series"
+}
+```
+
+### Settings
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/config` | Current settings (API keys masked) |
+| `PATCH` | `/config` | Update settings |
+| `GET` | `/config/browse` | Browse filesystem directories |
+| `POST` | `/config/verify-path` | Validate a library path |
+| `POST` | `/config/rename-all` | Batch rename files (SSE stream) |
+
+### Debug (debug mode only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/debug` | System info, DB stats, dependency versions |
 
 ---
 
-## Docker volumes
+## Metadata providers
 
-| Volume | Purpose |
-|---|---|
-| `manga_data` | Persistent SQLite database + cover cache |
-| `${LIBRARY_PATH}` | Your library folder (mounted read-only) |
+| Provider | Free | Key required | Best for |
+|----------|------|-------------|----------|
+| AniList | ✓ | No | Manga and anime |
+| Google Books | ✓ | No | Novels, comics |
+| Open Library | ✓ | No | Books, ISBNs |
+| ComicVine | ✓ | Yes | Western comics, manga |
+| Hardcover | ✓ | Yes | Books, graphic novels |
 
 ---
 
-## License
+## File conversion
 
-MIT
+The CBZ conversion pipeline:
+1. Extract archive to a temp folder
+2. Flatten nested image directories
+3. Remove non-image files (ComicInfo.xml, macOS `._*` files, etc.)
+4. Optionally convert images to WebP (requires Pillow)
+5. Repack as a CBZ with the same filename
+
+Supported formats for conversion: **CBZ**, **CBR**
+
+---
+
+## Database
+
+SQLite database at `data/collection.db`. Schema is created automatically on first run; migrations run at startup to add new columns to existing databases.
+
+Key tables:
+- `books` — file path, title, series, volume, category, format
+- `metadata_cache` — scraped/manual metadata (one row per source per book)
+- `reading_status` — per-book reading status and progress
+- `tags` / `book_tags` — tag system
+
+---
+
+## Development
+
+```bash
+# Debug mode (auto-reload, /docs endpoint)
+python main.py --debug
+
+# Override library path at startup
+python main.py --library /Volumes/NAS/manga
+
+# Override port
+python main.py --port 9000
+```
+
+### Project structure
+
+```
+booklibrary/
+├── main.py                 # Entry point, FastAPI app factory
+├── cbz_standardize.py      # CBZ conversion pipeline (also usable as CLI)
+├── db/
+│   ├── config.py           # Settings management (env > disk > defaults)
+│   ├── database.py         # SQLite schema, migrations, connection context
+│   └── models.py           # Pydantic models (request/response schemas)
+├── routers/
+│   ├── books.py            # Book CRUD, tags, status, move/rename
+│   ├── library.py          # Scan, CBZ conversion
+│   ├── metadata.py         # Metadata CRUD and scraping
+│   ├── batch.py            # Bulk operations (SSE streaming)
+│   ├── config.py           # Settings API, folder browser, batch rename
+│   └── debug.py            # System diagnostics (debug mode only)
+├── services/
+│   ├── scanner.py          # Library folder walker
+│   ├── covers.py           # Cover thumbnail extraction
+│   ├── metadata.py         # External API scrapers (AniList, Google Books…)
+│   └── standardizer.py     # CBZ conversion wrapper for FastAPI
+├── static/
+│   ├── app.js              # Single-file vanilla JS frontend (~2200 lines)
+│   ├── favicon.svg         # App icon
+│   └── favicon.png         # App icon (32×32 PNG)
+└── templates/
+    └── index.html          # SPA entry point (CSS + layout)
+```
