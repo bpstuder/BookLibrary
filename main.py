@@ -156,6 +156,21 @@ def create_app(debug: bool = False) -> FastAPI:
     async def index():
         return (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
 
+    @_app.head("/")
+    async def index_head():
+        """HEAD / for healthchecks and reverse-proxy probes."""
+        return HTMLResponse(content="", status_code=200)
+
+    @_app.head("/", status_code=200)
+    async def index_head():
+        """HEAD / — used by reverse proxies and health checkers."""
+        return None
+
+    @_app.get("/health")
+    async def health():
+        """Lightweight health check endpoint. Returns 200 + status."""
+        return {"status": "ok", "app": "BookLibrary"}
+
     return _app
 
 

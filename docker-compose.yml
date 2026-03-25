@@ -8,17 +8,22 @@ services:
     volumes:
       # Your manga/comics/ebooks folder — mount as read-only for safety
       - ${LIBRARY_PATH:-./library}:/app/library:ro
-      # Persistent DB + generated covers
+      # Persistent DB, covers, config
       - manga_data:/app/data
     environment:
       LIBRARY_PATH: /app/library
       COMICVINE_API_KEY: ${COMICVINE_API_KEY:-}
+      HARDCOVER_API_KEY: ${HARDCOVER_API_KEY:-}
       PORT: 8000
+      DEBUG: ${DEBUG:-false}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      # curl -f fails on HTTP 4xx/5xx; --head avoids downloading body
+      # start_period gives the app time to init DB and scan on startup
+      test: ["CMD", "curl", "-f", "--head", "--silent", "http://localhost:8000/"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
 
 volumes:
   manga_data:
