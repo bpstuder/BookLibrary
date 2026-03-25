@@ -679,17 +679,167 @@ async function loadStats() {
 }
 
 // ---------------------------------------------------------------------------
-// Scan
 // ---------------------------------------------------------------------------
+// Scan — SSE progress popup
+// ---------------------------------------------------------------------------
+
+let _scanAbortController = null;   // AbortController for the SSE fetch
+
 async function triggerScan() {
   const btn = document.querySelector('.scan-btn');
-  btn.textContent = '⟳ Scanning…'; btn.disabled = true;
+  if (btn) { btn.textContent = '⟳ Scanning…'; btn.disabled = true; }
+
+  // Reset and show popup
+  _scanPopupReset();
+  document.getElementById('scan-popup').classList.add('visible');
+  document.getElementById('btn-cancel-scan').style.display = '';
+
+  _scanAbortController = new AbortController();
+
   try {
-    const r = await api('/scan', { method:'POST' });
-    toast(`Scan done: +${r.added} added, ${r.removed} removed`, 'ok');
-    loadBooks(); loadStats();
-  } catch { toast('Scan failed', 'err'); }
-  finally { btn.textContent = '⟳ Scan library'; btn.disabled = false; }
+    const resp = await fetch('/scan', {
+      method: 'POST',
+      signal: _scanAbortController.signal,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      _scanPopupError(err.detail || 'Scan failed');
+      return;
+    }
+
+    await _readScanSSE(resp);
+
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      _scanPopupError(e.message);
+    }
+  } finally {
+    _scanAbortController = null;
+    if (btn) { btn.textContent = '⟳ Scan library'; btn.disabled = false; }
+    document.getElementById('btn-cancel-scan').style.display = 'none';
+  }
+}
+
+async function cancelScan() {
+  if (_scanAbortController) {
+    // Tell the server to stop
+    fetch('/scan', { method: 'DELETE' }).catch(() => {});
+    // Cut the SSE connection
+    _scanAbortController.abort();
+  }
+  document.getElementById('scan-popup-title').textContent = 'Scan cancelled';
+  document.getElementById('scan-popup-icon').textContent = '⚠';
+  document.getElementById('btn-cancel-scan').style.display = 'none';
+  document.getElementById('scan-status-text').textContent = 'Scan was cancelled.';
+}
+
+function closeScanPopup() {
+  document.getElementById('scan-popup').classList.remove('visible');
+}
+
+function _scanPopupReset() {
+  document.getElementById('scan-popup-title').textContent = 'Scanning library…';
+  document.getElementById('scan-popup-icon').textContent = '⟳';
+  document.getElementById('scan-bar-fill').style.width = '0%';
+  document.getElementById('scan-bar-text').textContent = 'Discovering files…';
+  document.getElementById('scan-bar-pct').textContent = '';
+  document.getElementById('scan-log-wrap').innerHTML = '';
+  document.getElementById('scan-status-text').textContent = '';
+}
+
+function _scanPopupError(msg) {
+  document.getElementById('scan-popup-title').textContent = 'Scan error';
+  document.getElementById('scan-popup-icon').textContent = '✗';
+  document.getElementById('scan-status-text').textContent = msg;
+  document.getElementById('scan-bar-fill').style.background = 'var(--red)';
+  toast(`Scan failed: ${msg}`, 'err');
+}
+
+function _scanLogLine(text, cls = '') {
+  const wrap = document.getElementById('scan-log-wrap');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  wrap.appendChild(line);
+  // Keep only last 40 lines to avoid DOM bloat
+  while (wrap.children.length > 40) wrap.removeChild(wrap.firstChild);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+async function _readScanSSE(resp) {
+  if (!resp.body) return;
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let buf = '';
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+
+    for (const part of parts) {
+      const eline = part.split('\n').find(l => l.startsWith('event:'));
+      const dline = part.split('\n').find(l => l.startsWith('data:'));
+      if (!dline) continue;
+
+      const etype = eline ? eline.slice(6).trim() : 'log';
+      let payload;
+      try { payload = JSON.parse(dline.slice(5).trim()); } catch { continue; }
+
+      if (etype === 'count') {
+        total = payload.total;
+        document.getElementById('scan-bar-text').textContent =
+          `Found ${total} file${total !== 1 ? 's' : ''} — processing…`;
+        document.getElementById('scan-bar-fill').style.width = '2%';
+        _scanLogLine(`📂 ${total} files discovered`);
+
+      } else if (etype === 'progress') {
+        const pct = total ? Math.round((payload.done / total) * 100) : 0;
+        document.getElementById('scan-bar-fill').style.width = pct + '%';
+        document.getElementById('scan-bar-pct').textContent = pct + '%';
+        document.getElementById('scan-bar-text').textContent =
+          `${payload.done} / ${total}`;
+        if (payload.action === 'added') {
+          _scanLogLine(`+ ${payload.file}`, 'log-added');
+        } else if (payload.action === 'error') {
+          _scanLogLine(`✗ ${payload.file}`, 'log-error');
+        }
+
+      } else if (etype === 'removed') {
+        if (payload.count > 0) {
+          _scanLogLine(`− ${payload.count} removed from library`);
+        }
+
+      } else if (etype === 'done') {
+        const { added, removed, errors } = payload;
+        document.getElementById('scan-bar-fill').style.width = '100%';
+        document.getElementById('scan-bar-fill').style.background = 'var(--green)';
+        document.getElementById('scan-popup-title').textContent = 'Scan complete';
+        document.getElementById('scan-popup-icon').textContent = '✓';
+        document.getElementById('scan-bar-text').textContent = 'Done';
+        document.getElementById('scan-bar-pct').textContent = '';
+        const parts = [];
+        if (added)   parts.push(`+${added} added`);
+        if (removed) parts.push(`-${removed} removed`);
+        if (errors.length) parts.push(`${errors.length} error${errors.length > 1 ? 's' : ''}`);
+        const summary = parts.join(' · ') || 'Nothing changed';
+        document.getElementById('scan-status-text').textContent = summary;
+        toast(`Scan done: ${summary}`, 'ok');
+        loadBooks(); loadStats();
+
+      } else if (etype === 'cancelled') {
+        document.getElementById('scan-popup-title').textContent = 'Scan cancelled';
+        document.getElementById('scan-popup-icon').textContent = '⚠';
+
+      } else if (etype === 'error') {
+        _scanPopupError(payload.msg || String(payload));
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
