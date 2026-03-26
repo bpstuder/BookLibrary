@@ -3,11 +3,8 @@ FROM python:3.12-slim
 # System deps:
 #   libjpeg-dev / zlib1g-dev / libwebp-dev — Pillow image support
 #   curl                                   — healthcheck
-#   gosu                                   — privilege drop in entrypoint
-#   passwd / shadow-utils (via login)      — usermod / groupmod
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libjpeg-dev zlib1g-dev libwebp-dev \
-    curl gosu \
+    libjpeg-dev zlib1g-dev libwebp-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,16 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Create a non-root user/group that will be remapped at runtime via PUID/PGID.
-# UID/GID 1000 are just defaults — entrypoint.sh overrides them.
-RUN groupadd -g 1000 appgroup \
- && useradd  -u 1000 -g appgroup -s /bin/sh -M appuser \
- && mkdir -p data/covers library \
- && chown -R appuser:appgroup /app
+# Pre-create runtime directories with open permissions so any UID can write.
+# The actual owner is set by `user: PUID:PGID` in docker-compose.yml.
+RUN mkdir -p data/covers library \
+ && chmod -R 777 data
 
 EXPOSE 8000
-
-ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --forwarded-allow-ips=* : trust X-Forwarded-* headers from any upstream proxy
 # --proxy-headers         : parse X-Forwarded-For / X-Forwarded-Proto

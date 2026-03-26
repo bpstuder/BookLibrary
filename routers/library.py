@@ -73,22 +73,34 @@ def trigger_scan():
         global _scan_running
         loop = asyncio.get_event_loop()
 
+        # Queue used to pass events from the worker thread to the async generator
+        queue: asyncio.Queue = asyncio.Queue()
+
         def _run():
-            return list(scan_library_stream(library, cancel_event=_cancel_flag))
+            """Run in thread pool — puts each event into the queue as it happens."""
+            try:
+                for ev in scan_library_stream(library, cancel_event=_cancel_flag):
+                    loop.call_soon_threadsafe(queue.put_nowait, ev)
+            except Exception as e:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, {"type": "error", "msg": str(e)}
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+
+        future = loop.run_in_executor(None, _run)
 
         try:
-            events = await loop.run_in_executor(None, _run)
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'msg': str(e)})}\n\n"
-            return
+            while True:
+                ev = await queue.get()
+                if ev is None:   # sentinel — scan thread finished
+                    break
+                etype = ev.get("type", "log")
+                yield f"event: {etype}\ndata: {json.dumps(ev)}\n\n"
         finally:
             _scan_running = False
             _cancel_flag.clear()
-
-        for ev in events:
-            etype = ev.get("type", "log")
-            yield f"event: {etype}\ndata: {json.dumps(ev)}\n\n"
-            await asyncio.sleep(0)
+            await asyncio.shield(future)   # ensure the thread is done
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
