@@ -15,6 +15,19 @@ scan_library_stream(library_path, cancel_event) -> Generator[dict, None, None]
       {"type": "done",     "added": int, "removed": int, "errors": list[str]}
       {"type": "cancelled"}
       {"type": "error",    "msg": str}
+
+Folder heuristics
+-----------------
+Category: each segment of the path between library_root and the file is tested
+against keyword lists. The first match from the top (closest to root) wins.
+  e.g.  library/Mangas/One Piece/T01.cbz  →  category = "manga"
+        library/BD/Lucky Luke/T01.cbz      →  category = "comics"
+
+Series: if the file sits inside a subdirectory of a category folder, that
+subdirectory name is used as the series (unless the filename already contains
+the same series string, in which case it just confirms the guess).
+  e.g.  library/Mangas/One Piece/T01.cbz  →  series = "One Piece"
+        library/Mangas/One Piece T01.cbz   →  series stays from filename
 """
 
 from __future__ import annotations
@@ -37,16 +50,119 @@ _EXT_CATEGORY = {
     ".epub": "book",
     ".mobi": "book",
     ".azw3": "book",
-    ".pdf": "book",
+    ".pdf":  "book",
 }
 
+# ---------------------------------------------------------------------------
+# Folder-based category keywords
+# Each entry is (category_value, {keyword_set}).
+# Matching is case-insensitive on the normalised folder name
+# (lowercased, accents stripped, spaces/underscores/hyphens collapsed).
+# First match wins, scanning from the library root downward.
+# ---------------------------------------------------------------------------
 
-def _ext_to_type(ext: str) -> str:
-    return ext.lstrip(".").lower()
+_FOLDER_CATEGORY_RULES: list[tuple[str, set[str]]] = [
+    ("manga",  {"manga", "mangas", "manhwa", "manhua", "webtoon", "webtoons"}),
+    ("comics", {"comics", "comic", "bd", "bandes dessinees", "bande dessinee",
+                "bds", "western comics", "us comics", "marvel", "dc", "superhero"}),
+    ("book",   {"books", "book", "novels", "novel", "romans", "roman", "ebooks",
+                "ebook", "livres", "livre", "literature", "non-fiction", "fiction"}),
+]
 
 
-def _guess_category(book_type: str) -> str:
-    return _EXT_CATEGORY.get("." + book_type, "unknown")
+def _normalise_folder_name(name: str) -> str:
+    """Lowercase, strip accents, collapse separators."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_name = nfkd.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[\s_\-]+", " ", ascii_name).strip().lower()
+
+
+def _category_from_path(path: Path, library_root: Path) -> Optional[str]:
+    """
+    Walk path segments between library_root and the file.
+    Return the first category matched, or None if no keyword matches.
+    """
+    try:
+        rel = path.relative_to(library_root)
+    except ValueError:
+        return None
+
+    # Test every intermediate folder (not the filename itself)
+    for part in rel.parts[:-1]:
+        norm = _normalise_folder_name(part)
+        for category, keywords in _FOLDER_CATEGORY_RULES:
+            if norm in keywords:
+                return category
+    return None
+
+
+def _series_from_path(
+    path: Path,
+    library_root: Path,
+    filename_series: Optional[str],
+    category_folder: Optional[str],
+) -> Optional[str]:
+    """
+    Infer series from folder structure.
+
+    Rules (in priority order):
+    1. If the file is directly inside a *category* folder  →  no series from path
+       (the category folder is not a series name)
+    2. If the file is inside a subfolder of a category folder  →  that subfolder = series
+    3. If the file is inside any non-root subfolder and no series was found from
+       the filename  →  use the immediate parent folder as series
+
+    The folder-derived series is used as-is if filename_series is None.
+    If filename_series is set and resembles the folder name, keep filename_series
+    (it's more precisely parsed — has vol number stripped, etc.).
+    """
+    try:
+        rel = path.relative_to(library_root)
+    except ValueError:
+        return filename_series
+
+    parts = rel.parts[:-1]   # intermediate folders only, no filename
+    if not parts:
+        return filename_series  # file is at library root — no folder hint
+
+    # Find the category folder depth (if any)
+    cat_depth: Optional[int] = None
+    if category_folder is not None:
+        for i, part in enumerate(parts):
+            norm = _normalise_folder_name(part)
+            for _, keywords in _FOLDER_CATEGORY_RULES:
+                if norm in keywords:
+                    cat_depth = i
+                    break
+            if cat_depth is not None:
+                break
+
+    # The series candidate is the folder immediately after the category folder,
+    # or the immediate parent folder if no category was detected.
+    if cat_depth is not None:
+        series_depth = cat_depth + 1
+    else:
+        series_depth = 0   # use the top-most subfolder
+
+    if series_depth >= len(parts):
+        # File is directly inside the category folder — no series hint
+        return filename_series
+
+    folder_series = parts[series_depth]
+
+    # If filename already has a series, only use folder series if they look alike
+    # (avoids overriding a good filename-based guess with an unrelated folder name)
+    if filename_series:
+        fn_norm  = _normalise_folder_name(filename_series)
+        fld_norm = _normalise_folder_name(folder_series)
+        # Accept if folder name starts with the filename series or vice-versa
+        if fld_norm.startswith(fn_norm) or fn_norm.startswith(fld_norm):
+            return filename_series   # filename parse is more precise
+        # They differ — trust the folder name (explicit organisation beats filename heuristic)
+        return folder_series
+
+    return folder_series
 
 
 # ---------------------------------------------------------------------------
@@ -67,19 +183,46 @@ def _discover_files(library_path: Path) -> dict[str, Path]:
     return disk_files
 
 
+def _ext_to_type(ext: str) -> str:
+    return ext.lstrip(".").lower()
+
+
+def _guess_category(book_type: str) -> str:
+    return _EXT_CATEGORY.get("." + book_type, "unknown")
+
+
 # ---------------------------------------------------------------------------
-# Insert / update one book (shared between both scan variants)
+# Insert / update one book
 # ---------------------------------------------------------------------------
 
-def _insert_book(conn, path_str: str, path: Path) -> str:
+def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
     """
-    Insert a new book. Returns one of: 'added' | 'skip' | raises Exception.
-    Caller is responsible for checking whether path_str is already in DB.
+    Insert a new book. Returns 'added' on success, raises on error.
+
+    Metadata resolution order:
+      1. Filename heuristics (series + volume from name pattern)
+      2. Folder-based series override (parent folder = series name)
+      3. Folder-based category override (keyword match on path segments)
+      4. Extension-based category fallback
     """
-    title, series, volume = _guess_metadata(path)
+    title, filename_series, volume = _guess_metadata(path)
     book_type = _ext_to_type(path.suffix)
+
+    # ── Category ──────────────────────────────────────────────────────────
+    folder_category = _category_from_path(path, library_root)
+    category = folder_category or _guess_category(book_type)
+
+    # ── Series ────────────────────────────────────────────────────────────
+    series = _series_from_path(path, library_root, filename_series, folder_category)
+
+    # Rebuild title if series changed (folder gave us a better series name)
+    if series and series != filename_series:
+        if volume is not None:
+            title = f"{series} T{volume:02d}"
+        else:
+            title = series
+
     file_size = path.stat().st_size
-    category  = _guess_category(book_type)
 
     cur = conn.execute(
         """
@@ -160,7 +303,7 @@ def scan_library_stream(
 
                 done += 1
                 try:
-                    _insert_book(conn, path_str, path)
+                    _insert_book(conn, path_str, path, library_root=library_path)
                     added += 1
                     action = "added"
                     log.debug("Scan: added %s", path.name)
@@ -232,15 +375,17 @@ def scan_library(
 # ---------------------------------------------------------------------------
 
 def _guess_metadata(path: Path) -> tuple[str, str | None, int | None]:
-    """Extract title, series, volume from filename."""
+    """Extract title, series, volume from filename alone."""
     stem = path.stem
 
+    # Pattern: <series> - T<volume>  e.g. "One Piece - T01"
     m = re.match(r"^(.+?)\s*-\s*[Tt](\d+)$", stem)
     if m:
         series = m.group(1).strip()
         volume = int(m.group(2))
         return f"{series} T{volume:02d}", series, volume
 
+    # Pattern: <series> [v|vol|t|tome|volume] <digits>
     m = re.search(
         r"^(.*?)[\s_\-\.]*(?:v|t|vol|tome|volume)[\s_\-\.]*(\d+)\s*$",
         stem, re.IGNORECASE,
