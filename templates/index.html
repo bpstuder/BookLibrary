@@ -428,7 +428,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
   width:72px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
 /* Scan progress popup */
 #scan-popup { position:fixed; bottom:1.25rem; left:calc(var(--sidebar) + 1rem);
-  width:320px; background:var(--surface); border:1px solid var(--border);
+  width:340px; background:var(--surface); border:1px solid var(--border);
   border-radius:12px; box-shadow:0 4px 32px rgba(0,0,0,.5); z-index:60;
   overflow:hidden; display:none; }
 #scan-popup.visible { display:block; }
@@ -438,19 +438,37 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 .scan-popup-close { background:none; border:none; cursor:pointer;
   color:var(--muted); font-size:.9rem; padding:0; line-height:1; }
 .scan-popup-close:hover { color:var(--text); }
+/* spinner */
+@keyframes spin { to { transform:rotate(360deg); } }
+.scan-spinner { display:inline-block; animation:spin 1s linear infinite; }
+.scan-spinner.done { animation:none; }
+/* bar */
 .scan-bar-wrap { padding:.55rem .85rem .3rem; }
-.scan-bar-track { height:6px; background:var(--surface3); border-radius:3px; overflow:hidden; }
-.scan-bar-fill { height:100%; background:var(--accent); border-radius:3px;
-  transition:width .2s; width:0%; }
-.scan-bar-label { font-size:.72rem; color:var(--muted); margin-top:.3rem;
+.scan-bar-track { height:7px; background:var(--surface3); border-radius:4px; overflow:hidden; }
+.scan-bar-fill { height:100%; background:var(--accent); border-radius:4px;
+  transition:width .25s, background .3s; width:0%; }
+.scan-bar-label { font-size:.72rem; color:var(--muted); margin-top:.35rem;
   display:flex; justify-content:space-between; }
-.scan-log-wrap { max-height:110px; overflow-y:auto; padding:.3rem .85rem .55rem;
-  font-family:monospace; font-size:.72rem; line-height:1.5; color:var(--muted); }
-.scan-log-wrap .log-added  { color:var(--green); }
-.scan-log-wrap .log-error  { color:var(--red); }
+/* counters */
+.scan-counters { display:flex; gap:.5rem; padding:.3rem .85rem;
+  font-size:.72rem; font-weight:600; }
+.scan-cnt { display:flex; align-items:center; gap:.2rem; }
+.scan-cnt-val { font-size:.82rem; font-weight:700; }
+.scan-cnt.added  .scan-cnt-val { color:var(--green); }
+.scan-cnt.skip   .scan-cnt-val { color:var(--muted); }
+.scan-cnt.errors .scan-cnt-val { color:var(--red); }
+/* log */
+.scan-log-wrap { max-height:100px; overflow-y:auto; padding:.25rem .85rem .45rem;
+  font-family:monospace; font-size:.72rem; line-height:1.55; color:var(--muted); }
+.scan-log-wrap .log-added   { color:var(--green); }
+.scan-log-wrap .log-removed { color:var(--amber); }
+.scan-log-wrap .log-error   { color:var(--red); }
+.scan-log-wrap .log-info    { color:var(--muted); }
+/* footer */
 .scan-popup-footer { padding:.45rem .85rem; border-top:1px solid var(--border);
   display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
-.scan-status-text { font-size:.75rem; color:var(--muted); flex:1; }
+.scan-status-text { font-size:.74rem; color:var(--muted); flex:1;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -881,7 +899,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
   <!-- Scan progress popup -->
   <div id="scan-popup">
     <div class="scan-popup-header">
-      <span id="scan-popup-icon">⟳</span>
+      <span id="scan-popup-icon" class="scan-spinner">⟳</span>
       <span class="scan-popup-title" id="scan-popup-title">Scanning library…</span>
       <button class="scan-popup-close" onclick="closeScanPopup()" title="Dismiss">✕</button>
     </div>
@@ -889,14 +907,30 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
       <div class="scan-bar-track"><div class="scan-bar-fill" id="scan-bar-fill"></div></div>
       <div class="scan-bar-label">
         <span id="scan-bar-text">Discovering files…</span>
-        <span id="scan-bar-pct"></span>
+        <span id="scan-bar-pct" style="font-weight:700"></span>
       </div>
+    </div>
+    <div class="scan-counters">
+      <div class="scan-cnt added">
+        <span class="scan-cnt-val" id="scan-cnt-added">0</span>
+        <span style="color:var(--muted)">added</span>
+      </div>
+      <div class="scan-cnt skip" style="margin-left:.25rem">
+        <span class="scan-cnt-val" id="scan-cnt-skip">0</span>
+        <span style="color:var(--muted)">skipped</span>
+      </div>
+      <div class="scan-cnt errors" style="margin-left:.25rem">
+        <span class="scan-cnt-val" id="scan-cnt-err">0</span>
+        <span style="color:var(--muted)">errors</span>
+      </div>
+      <span id="scan-cnt-removed" style="margin-left:auto;font-size:.7rem;
+        color:var(--amber);display:none"></span>
     </div>
     <div class="scan-log-wrap" id="scan-log-wrap"></div>
     <div class="scan-popup-footer">
       <span class="scan-status-text" id="scan-status-text"></span>
-      <button class="btn btn-ghost btn-sm" id="btn-cancel-scan"
-              onclick="cancelScan()" style="display:none">✕ Cancel</button>
+      <button class="btn btn-danger btn-sm" id="btn-cancel-scan"
+              onclick="cancelScan()" style="display:none;flex-shrink:0">✕ Cancel</button>
     </div>
   </div>
 </main>

@@ -689,7 +689,6 @@ async function triggerScan() {
   const btn = document.querySelector('.scan-btn');
   if (btn) { btn.textContent = '⟳ Scanning…'; btn.disabled = true; }
 
-  // Reset and show popup
   _scanPopupReset();
   document.getElementById('scan-popup').classList.add('visible');
   document.getElementById('btn-cancel-scan').style.display = '';
@@ -718,18 +717,21 @@ async function triggerScan() {
     _scanAbortController = null;
     if (btn) { btn.textContent = '⟳ Scan library'; btn.disabled = false; }
     document.getElementById('btn-cancel-scan').style.display = 'none';
+    document.getElementById('scan-popup-icon').classList.remove('scan-spinner');
   }
 }
 
 async function cancelScan() {
-  if (_scanAbortController) {
-    // Tell the server to stop
-    fetch('/scan', { method: 'DELETE' }).catch(() => {});
-    // Cut the SSE connection
-    _scanAbortController.abort();
-  }
+  // Tell the server to stop processing
+  fetch('/scan', { method: 'DELETE' }).catch(() => {});
+  // Cut the SSE stream
+  if (_scanAbortController) _scanAbortController.abort();
+
+  const icon = document.getElementById('scan-popup-icon');
+  icon.textContent = '⚠';
+  icon.classList.remove('scan-spinner');
   document.getElementById('scan-popup-title').textContent = 'Scan cancelled';
-  document.getElementById('scan-popup-icon').textContent = '⚠';
+  document.getElementById('scan-bar-fill').style.background = 'var(--amber)';
   document.getElementById('btn-cancel-scan').style.display = 'none';
   document.getElementById('scan-status-text').textContent = 'Scan was cancelled.';
 }
@@ -739,31 +741,40 @@ function closeScanPopup() {
 }
 
 function _scanPopupReset() {
+  const icon = document.getElementById('scan-popup-icon');
+  icon.textContent = '⟳';
+  icon.classList.add('scan-spinner');
   document.getElementById('scan-popup-title').textContent = 'Scanning library…';
-  document.getElementById('scan-popup-icon').textContent = '⟳';
   document.getElementById('scan-bar-fill').style.width = '0%';
+  document.getElementById('scan-bar-fill').style.background = 'var(--accent)';
   document.getElementById('scan-bar-text').textContent = 'Discovering files…';
   document.getElementById('scan-bar-pct').textContent = '';
+  document.getElementById('scan-cnt-added').textContent = '0';
+  document.getElementById('scan-cnt-skip').textContent  = '0';
+  document.getElementById('scan-cnt-err').textContent   = '0';
+  const rem = document.getElementById('scan-cnt-removed');
+  rem.textContent = ''; rem.style.display = 'none';
   document.getElementById('scan-log-wrap').innerHTML = '';
   document.getElementById('scan-status-text').textContent = '';
 }
 
 function _scanPopupError(msg) {
+  const icon = document.getElementById('scan-popup-icon');
+  icon.textContent = '✗'; icon.classList.remove('scan-spinner');
   document.getElementById('scan-popup-title').textContent = 'Scan error';
-  document.getElementById('scan-popup-icon').textContent = '✗';
   document.getElementById('scan-status-text').textContent = msg;
   document.getElementById('scan-bar-fill').style.background = 'var(--red)';
   toast(`Scan failed: ${msg}`, 'err');
 }
 
-function _scanLogLine(text, cls = '') {
+function _scanLogLine(text, cls = 'log-info') {
   const wrap = document.getElementById('scan-log-wrap');
   const line = document.createElement('div');
-  if (cls) line.className = cls;
+  line.className = cls;
   line.textContent = text;
   wrap.appendChild(line);
-  // Keep only last 40 lines to avoid DOM bloat
-  while (wrap.children.length > 40) wrap.removeChild(wrap.firstChild);
+  // Cap at 60 lines to avoid DOM bloat
+  while (wrap.children.length > 60) wrap.removeChild(wrap.firstChild);
   wrap.scrollTop = wrap.scrollHeight;
 }
 
@@ -771,8 +782,9 @@ async function _readScanSSE(resp) {
   if (!resp.body) return;
   const reader = resp.body.getReader();
   const dec    = new TextDecoder();
-  let buf = '';
+  let buf   = '';
   let total = 0;
+  let cntAdded = 0, cntSkip = 0, cntErr = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -792,10 +804,10 @@ async function _readScanSSE(resp) {
 
       if (etype === 'count') {
         total = payload.total;
-        document.getElementById('scan-bar-text').textContent =
-          `Found ${total} file${total !== 1 ? 's' : ''} — processing…`;
         document.getElementById('scan-bar-fill').style.width = '2%';
-        _scanLogLine(`📂 ${total} files discovered`);
+        document.getElementById('scan-bar-text').textContent =
+          `${total} file${total !== 1 ? 's' : ''} found — processing…`;
+        _scanLogLine(`📂 ${total} files discovered`, 'log-info');
 
       } else if (etype === 'progress') {
         const pct = total ? Math.round((payload.done / total) * 100) : 0;
@@ -803,40 +815,58 @@ async function _readScanSSE(resp) {
         document.getElementById('scan-bar-pct').textContent = pct + '%';
         document.getElementById('scan-bar-text').textContent =
           `${payload.done} / ${total}`;
+
         if (payload.action === 'added') {
+          cntAdded++;
+          document.getElementById('scan-cnt-added').textContent = cntAdded;
           _scanLogLine(`+ ${payload.file}`, 'log-added');
         } else if (payload.action === 'error') {
+          cntErr++;
+          document.getElementById('scan-cnt-err').textContent = cntErr;
           _scanLogLine(`✗ ${payload.file}`, 'log-error');
+        } else if (payload.action === 'skip') {
+          cntSkip += (payload.count || 1);
+          document.getElementById('scan-cnt-skip').textContent = cntSkip;
+          // Don't log individual skips — too noisy
         }
 
       } else if (etype === 'removed') {
         if (payload.count > 0) {
-          _scanLogLine(`− ${payload.count} removed from library`);
+          const el = document.getElementById('scan-cnt-removed');
+          el.textContent = `−${payload.count} removed`;
+          el.style.display = '';
+          _scanLogLine(`− ${payload.count} file${payload.count > 1 ? 's' : ''} removed from library`, 'log-removed');
         }
 
       } else if (etype === 'done') {
         const { added, removed, errors } = payload;
+        const icon = document.getElementById('scan-popup-icon');
+        icon.textContent = errors.length ? '⚠' : '✓';
+        icon.classList.remove('scan-spinner');
+        document.getElementById('scan-popup-title').textContent =
+          errors.length ? 'Scan complete (with errors)' : 'Scan complete';
         document.getElementById('scan-bar-fill').style.width = '100%';
-        document.getElementById('scan-bar-fill').style.background = 'var(--green)';
-        document.getElementById('scan-popup-title').textContent = 'Scan complete';
-        document.getElementById('scan-popup-icon').textContent = '✓';
+        document.getElementById('scan-bar-fill').style.background =
+          errors.length ? 'var(--amber)' : 'var(--green)';
         document.getElementById('scan-bar-text').textContent = 'Done';
-        document.getElementById('scan-bar-pct').textContent = '';
+        document.getElementById('scan-bar-pct').textContent = '100%';
+        // Final status line
         const parts = [];
         if (added)   parts.push(`+${added} added`);
-        if (removed) parts.push(`-${removed} removed`);
+        if (removed) parts.push(`−${removed} removed`);
         if (errors.length) parts.push(`${errors.length} error${errors.length > 1 ? 's' : ''}`);
-        const summary = parts.join(' · ') || 'Nothing changed';
-        document.getElementById('scan-status-text').textContent = summary;
-        toast(`Scan done: ${summary}`, 'ok');
+        document.getElementById('scan-status-text').textContent =
+          parts.length ? parts.join('  ·  ') : 'No changes';
+        _scanLogLine(`✓ Scan complete: ${parts.join(', ') || 'no changes'}`, 'log-info');
+        errors.forEach(e => _scanLogLine(`  ✗ ${e}`, 'log-error'));
+        toast(parts.length ? `Scan complete — ${parts.join(', ')}` : 'Scan complete — no changes', 'ok');
         loadBooks(); loadStats();
 
       } else if (etype === 'cancelled') {
-        document.getElementById('scan-popup-title').textContent = 'Scan cancelled';
-        document.getElementById('scan-popup-icon').textContent = '⚠';
+        // Handled by cancelScan()
 
       } else if (etype === 'error') {
-        _scanPopupError(payload.msg || String(payload));
+        _scanPopupError(payload.msg || 'Unknown error');
       }
     }
   }

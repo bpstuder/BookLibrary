@@ -6,9 +6,9 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     volumes:
-      # Your manga/comics/ebooks folder — mount as read-only for safety
+      # Your manga/comics/ebooks folder — mounted read-only for safety
       - ${LIBRARY_PATH:-./library}:/app/library:ro
-      # Persistent DB, covers, config
+      # Persistent DB, covers, config — written as PUID:PGID
       - manga_data:/app/data
     environment:
       LIBRARY_PATH: /app/library
@@ -16,9 +16,12 @@ services:
       HARDCOVER_API_KEY: ${HARDCOVER_API_KEY:-}
       PORT: 8000
       DEBUG: ${DEBUG:-false}
+      # UID/GID of the host user who owns the library and data directories.
+      # Match these to the output of `id -u` and `id -g` on the host.
+      # Default: 1000:1000 (standard first user on most Linux systems)
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     healthcheck:
-      # curl -f fails on HTTP 4xx/5xx; --head avoids downloading body
-      # start_period gives the app time to init DB and scan on startup
       test: ["CMD", "curl", "-f", "--head", "--silent", "http://localhost:8000/"]
       interval: 30s
       timeout: 5s
