@@ -8,8 +8,22 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
+
+try:
+    from PIL import Image  # type: ignore
+    _PILLOW_AVAILABLE = True
+except ImportError:
+    _PILLOW_AVAILABLE = False
+
+try:
+    import fitz  # type: ignore  # pymupdf — optional
+    _FITZ_AVAILABLE = True
+except ImportError:
+    _FITZ_AVAILABLE = False
 
 log = logging.getLogger("manga.covers")
 
@@ -44,28 +58,24 @@ def extract_cover(book_path: Path, book_id: int) -> Path | None:
         else:
             log.debug("covers: %-40s → no image found", book_path.name)
         return result
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.debug("covers: %-40s → error: %s", book_path.name, e)
         return None
 
 
-def _save_thumbnail(img_bytes: bytes, book_id: int, fmt: str = "JPEG") -> Path:
+def _save_thumbnail(img_bytes: bytes, book_id: int) -> Path:
     """Resize and save a cover image. Requires Pillow."""
-    from PIL import Image
-
     out_path = _covers_dir() / f"{book_id}.jpg"
     with Image.open(io.BytesIO(img_bytes)) as im:
         if im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
         im.thumbnail(COVER_SIZE)
-        im.save(out_path, "JPEG", quality=85, optimize=True)
+        im.save(out_path, "JPEG", quality=85, optimize=True)  # always JPEG
     return out_path
 
 
 def _cover_from_cbz(path: Path, book_id: int) -> Path | None:
     """First image (natural sort) inside a CBZ/CBR (both are ZIP-compatible)."""
-    import re
-
     def _key(name: str) -> list:
         return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
@@ -92,8 +102,6 @@ def _cover_from_epub(path: Path, book_id: int) -> Path | None:
     Parse the EPUB OPF manifest to find the cover-image item.
     Falls back to the first image in the ZIP if not declared.
     """
-    from xml.etree import ElementTree as ET
-
     image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
     try:
         with zipfile.ZipFile(path, "r") as zf:
@@ -135,10 +143,13 @@ def _cover_from_epub(path: Path, book_id: int) -> Path | None:
                 [n for n in names if Path(n).suffix.lower() in image_exts]
             )
             if images:
-                log.debug("covers: EPUB %s — OPF cover not found, fallback to %s", path.name, images[0])
+                log.debug(
+                    "covers: EPUB %s — OPF cover not found, fallback to %s",
+                    path.name, images[0],
+                )
                 return _save_thumbnail(zf.read(images[0]), book_id)
             log.debug("covers: EPUB %s — no images found at all", path.name)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.debug("covers: EPUB %s — parse error: %s", path.name, e)
     return None
 
@@ -148,9 +159,10 @@ def _cover_from_pdf(path: Path, book_id: int) -> Path | None:
     Render the first page of a PDF as a JPEG thumbnail.
     Requires pymupdf (fitz): pip install pymupdf
     """
+    if not _FITZ_AVAILABLE:
+        log.debug("covers: PDF %s — pymupdf not installed, skipping", path.name)
+        return None
     try:
-        import fitz  # type: ignore
-
         doc = fitz.open(str(path))
         if not doc.page_count:
             log.debug("covers: PDF %s — empty document (0 pages)", path.name)
@@ -159,9 +171,7 @@ def _cover_from_pdf(path: Path, book_id: int) -> Path | None:
         pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
         log.debug("covers: PDF %s — page 0 rendered (%dx%d)", path.name, pix.width, pix.height)
         return _save_thumbnail(pix.tobytes("jpeg"), book_id)
-    except ImportError:
-        log.debug("covers: PDF %s — pymupdf not installed, skipping", path.name)
-        return None
-    except Exception as e:
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.debug("covers: PDF %s — render error: %s", path.name, e)
         return None

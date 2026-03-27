@@ -40,6 +40,7 @@ ALL_SOURCES = ("anilist", "comicvine", "googlebooks", "hardcover", "openlib")
 # ---------------------------------------------------------------------------
 
 def _meta_files_dir() -> Path:
+    """Return (and create) the metadata sidecar directory."""
     d = Path(cfg.get("metadata_files_dir", "data/metadata")).expanduser()
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -55,11 +56,12 @@ def _read_sidecar(book_id: int) -> list[dict]:
         return []
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return []
 
 
 def _write_sidecar(book_id: int, rows: list[dict]) -> None:
+    """Write metadata rows to the sidecar JSON file for a book."""
     _sidecar_path(book_id).write_text(
         json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -76,6 +78,7 @@ def _sync_sidecar_from_db(book_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 def enabled_sources() -> list[str]:
+    """Return the list of metadata provider IDs that are currently enabled."""
     enabled = cfg.get("metadata_providers_enabled", list(ALL_SOURCES))
     return [s for s in ALL_SOURCES if s in enabled]
 
@@ -111,7 +114,11 @@ async def fetch_and_store(book_id: int, source: str, query: str) -> list[dict]:
         row = _build_db_row(book_id, row_source, result, is_manual=False)
         if storage in ("db", "both"):
             _upsert_row(row)
-            log.debug("metadata: stored %s for book_id=%d — %r", row_source, book_id, result.get("title") or result.get("_title"))
+            log.debug(
+                "metadata: stored %s for book_id=%d — %r",
+                row_source, book_id,
+                result.get("title") or result.get("_title"),
+            )
         result["source"]     = row_source
         result["book_id"]    = book_id
         result["is_pinned"]  = False
@@ -177,6 +184,7 @@ def pin_metadata(book_id: int, metadata_id: int) -> None:
 
 
 def delete_metadata(book_id: int, metadata_id: int) -> None:
+    """Delete a single cached metadata row by id."""
     with get_conn() as conn:
         conn.execute(
             "DELETE FROM metadata_cache WHERE id = ? AND book_id = ?",
@@ -212,9 +220,9 @@ def save_manual(book_id: int, data: dict) -> dict:
     # Sync book-table fields (title, series, volume) automatically
     # so the main list/table always reflects manual metadata.
     # Whitelist is explicit: only these three columns may reach the SET clause.
-    _BOOK_SYNC_FIELDS = ("title", "series", "volume")
+    book_sync_fields = ("title", "series", "volume")
     book_sync: dict[str, Any] = {}
-    for field in _BOOK_SYNC_FIELDS:
+    for field in book_sync_fields:
         if field in data and data[field] is not None:
             book_sync[field] = data[field]
     if book_sync:
@@ -252,10 +260,10 @@ def apply_to_book(book_id: int, metadata_id: int, fields: list[str], pin: bool) 
     # Whitelist: only title/series/volume may be copied to the books table.
     # The caller-supplied 'fields' list is validated here — no raw key
     # from user input reaches the SET clause.
-    _ALLOWED_BOOK_COPY = {"title", "series", "volume"}
+    allowed_book_copy = frozenset({"title", "series", "volume"})
     book_fields: dict[str, Any] = {}
     for f in fields:
-        if f in _ALLOWED_BOOK_COPY and meta.get(f) is not None:
+        if f in allowed_book_copy and meta.get(f) is not None:
             book_fields[f] = meta[f]
 
     if book_fields:
@@ -546,9 +554,12 @@ async def _fetch_googlebooks(query: str) -> list[dict]:
         isbn13= next((x["identifier"] for x in ids if x["type"] == "ISBN_13"), None)
         imgs  = info.get("imageLinks") or {}
         sub   = []
-        if info.get("publishedDate"): sub.append(info["publishedDate"][:4])
-        if info.get("pageCount"):     sub.append(f"{info['pageCount']} p.")
-        if info.get("publisher"):     sub.append(info["publisher"])
+        if info.get("publishedDate"):
+            sub.append(info["publishedDate"][:4])
+        if info.get("pageCount"):
+            sub.append(f"{info['pageCount']} p.")
+        if info.get("publisher"):
+            sub.append(info["publisher"])
         results.append({
             "_title":    info.get("title", ""),
             "_subtitle": " · ".join(sub),
@@ -603,7 +614,7 @@ async def _fetch_hardcover(query: str) -> list[dict]:
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             raw = []
     hits = raw if isinstance(raw, list) else raw.get("hits", [])
 
@@ -612,7 +623,8 @@ async def _fetch_hardcover(query: str) -> list[dict]:
         doc = hit.get("document") or hit
         authors = [str(a) for a in (doc.get("author_names") or [])]
         sub = []
-        if doc.get("release_year"): sub.append(str(doc["release_year"])[:4])
+        if doc.get("release_year"):
+            sub.append(str(doc["release_year"])[:4])
         results.append({
             "_title":    doc.get("title", ""),
             "_subtitle": " · ".join(sub),
@@ -622,7 +634,10 @@ async def _fetch_hardcover(query: str) -> list[dict]:
             "authors":   authors,
             "genres":    doc.get("genres") or [],
             "score":     _safe_float(doc.get("rating")),
-            "cover_url": doc.get("image", {}).get("url") if isinstance(doc.get("image"), dict) else None,
+            "cover_url": (
+                doc.get("image", {}).get("url")
+                if isinstance(doc.get("image"), dict) else None
+            ),
             "external_id": str(doc.get("id") or ""),
             "raw":       doc,
         })
@@ -655,8 +670,10 @@ async def _fetch_openlib(query: str) -> list[dict]:
         isbn10     = next((x for x in isbn_list if len(x) == 10), None)
         isbn13_val = next((x for x in isbn_list if len(x) == 13), None)
         sub = []
-        if doc.get("first_publish_year"): sub.append(str(doc["first_publish_year"]))
-        if doc.get("edition_count"):      sub.append(f"{doc['edition_count']} ed.")
+        if doc.get("first_publish_year"):
+            sub.append(str(doc["first_publish_year"]))
+        if doc.get("edition_count"):
+            sub.append(f"{doc['edition_count']} ed.")
         results.append({
             "_title":    doc.get("title", ""),
             "_subtitle": " · ".join(sub),

@@ -15,6 +15,7 @@ from typing import Generator
 import cbz_standardize as cbz
 from db.database import get_conn
 from services.covers import extract_cover
+from services.scanner import _guess_metadata
 
 
 def standardize_book(
@@ -50,13 +51,14 @@ def standardize_book(
         def write(self, s: str):
             if s.strip():
                 log_lines.append(s.rstrip())
-        def flush(self): pass
+        def flush(self):
+            pass
 
-    def _no_prompt(prompt: str) -> str:
+    def _no_prompt(_prompt: str) -> str:
         log_lines.append("  [warn]    Skipping interactive prompt in web mode")
         return ""
 
-    cbz._ask = _no_prompt
+    cbz._ask = _no_prompt  # pylint: disable=protected-access
 
     try:
         # redirect_stdout is a context manager: stdout is always restored on exit,
@@ -73,12 +75,10 @@ def standardize_book(
                 verbose=True,
             )
 
-        for line in log_lines:
-            yield line
+        yield from log_lines
 
         # Update DB
         new_size = output_path.stat().st_size if output_path.exists() else None
-        from services.scanner import _guess_metadata
         title, series, volume = _guess_metadata(output_path)
 
         with get_conn() as conn:
@@ -103,12 +103,11 @@ def standardize_book(
             try:
                 cbz_path.unlink()
                 yield f"  [delete]  Original file removed: {cbz_path.name}"
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield f"  [warn]    Could not delete original: {e}"
 
         yield f"DONE:{output_path}"
 
-    except Exception as e:
-        for line in log_lines:
-            yield line
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        yield from log_lines
         yield f"ERROR:{e}"

@@ -37,6 +37,7 @@ class CategoryDef(BaseModel):
 # ---------------------------------------------------------------------------
 
 class BookBase(BaseModel):
+    """Base book fields shared by create and output models."""
     title:    str
     series:   Optional[str] = None
     volume:   Optional[int] = None
@@ -45,11 +46,13 @@ class BookBase(BaseModel):
 
 
 class BookCreate(BookBase):
+    """Fields required to create a new book record."""
     path:      str
     file_size: Optional[int] = None
 
 
 class BookUpdate(BaseModel):
+    """Partial update payload for a book record."""
     title:    Optional[str]     = None
     series:   Optional[str]     = None
     volume:   Optional[int]     = None
@@ -58,6 +61,7 @@ class BookUpdate(BaseModel):
 
 
 class BookOut(BookBase):
+    """Full book record returned by the API."""
     model_config = ConfigDict(from_attributes=True)
 
     id:         int
@@ -78,6 +82,7 @@ class BookOut(BookBase):
 # ---------------------------------------------------------------------------
 
 class SeriesOut(BaseModel):
+    """Aggregated series view."""
     series:   str
     category: str
     count:    int
@@ -90,6 +95,7 @@ class SeriesOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TagOut(BaseModel):
+    """A tag with its database id."""
     id:   int
     name: str
 
@@ -99,6 +105,7 @@ class TagOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 class StatusUpdate(BaseModel):
+    """Payload for updating reading status."""
     status:   ReadStatus
     progress: Optional[int] = None
 
@@ -186,11 +193,13 @@ class MetadataSaveRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class MoveRequest(BaseModel):
+    """Payload for file move/rename operation."""
     pattern:    str  = "{series}/{title}"
     delete_old: bool = False
 
 
 class StandardizeRequest(BaseModel):
+    """Payload for CBZ standardization operation."""
     webp:         bool = False
     webp_quality: int  = 85
     delete_old:   bool = False
@@ -201,6 +210,7 @@ class StandardizeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class BookFilters(BaseModel):
+    """Query parameters for filtering and sorting the book list."""
     q:        Optional[str]        = None
     type:     Optional[BookType]   = None
     category: Optional[str]         = None  # accepts built-in and custom categories
@@ -218,6 +228,7 @@ class BookFilters(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ScanResult(BaseModel):
+    """Result summary from a library scan."""
     added:   int
     updated: int
     removed: int

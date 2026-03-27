@@ -22,6 +22,7 @@ import db.config as cfg
 from db.database import get_conn
 from db.models import MetadataApply, MetadataWrite
 from services.metadata import (
+    _sidecar_path,
     ALL_SOURCES, enabled_sources, fetch_and_store,
     get_cached, pin_metadata, delete_metadata,
     save_manual, apply_to_book,
@@ -121,9 +122,9 @@ async def fetch_meta(body: FetchRequest) -> dict:
         await fetch_and_store(body.book_id, body.source, body.query)
     except RuntimeError as e:
         # RuntimeError is raised when an API key is missing
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, str(e)) from e
     except Exception as e:
-        raise HTTPException(502, f"External API error: {e}")
+        raise HTTPException(502, f"External API error: {e}") from e
 
     rows = get_cached(body.book_id)
     return {"count": len(rows), "results": rows}
@@ -194,5 +195,4 @@ def delete_all_meta(book_id: int) -> None:
     """
     with get_conn() as conn:
         conn.execute("DELETE FROM metadata_cache WHERE book_id = ?", (book_id,))
-    from services.metadata import _sidecar_path
     _sidecar_path(book_id).unlink(missing_ok=True)

@@ -54,7 +54,7 @@ def _system_info() -> dict:
     def _ver(mod: str) -> str:
         try:
             return __import__(mod).__version__
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return "unknown"
 
     return {
@@ -90,7 +90,7 @@ def _library_info(library_path: str) -> dict:
     counts: dict[str, int] = {}
     total = 0
     try:
-        for root, _, files in os.walk(target):
+        for _, _, files in os.walk(target):
             for fname in files:
                 ext = Path(fname).suffix.lower()
                 if ext in SUPPORTED:
@@ -126,7 +126,7 @@ def _db_info() -> dict:
             "size_human": _human_size(size_bytes),
             "tables":     tables,
         }
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         return {"status": "error", "error": str(e)}
 
 

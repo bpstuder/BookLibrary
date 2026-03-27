@@ -19,19 +19,24 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 import db.config as cfg
-from db.models import ScanResult, StandardizeRequest
+from db.models import StandardizeRequest
 from services.scanner import scan_library_stream
 from services.standardizer import standardize_book
 
 router = APIRouter(tags=["library"])
 
+
 # ---------------------------------------------------------------------------
 # Scan state — one scan at a time (per process)
+# Using a plain object avoids module-level mutable globals and the
+# 'global' statement warnings they require.
 # ---------------------------------------------------------------------------
 
-_scan_lock   = threading.Lock()
-_cancel_flag = threading.Event()   # set() to request cancellation
-_scan_running = False
+class _ScanState:
+    """Mutable scan lifecycle state, shared across requests in the same process."""
+    lock        = threading.Lock()
+    cancel_flag = threading.Event()
+    active      = False
 
 
 def _library_path() -> Path:
@@ -56,34 +61,30 @@ def trigger_scan():
     - `event: cancelled`— scan was aborted via DELETE /scan
     - `event: error`    — fatal error
     """
-    global _scan_running
-
-    with _scan_lock:
-        if _scan_running:
+    with _ScanState.lock:
+        if _ScanState.active:
             raise HTTPException(status_code=409, detail="A scan is already running")
-        _scan_running = True
-        _cancel_flag.clear()
+        _ScanState.active = True
+        _ScanState.cancel_flag.clear()
 
     library = _library_path()
     if not library.exists():
-        _scan_running = False
+        _ScanState.active = False
         raise HTTPException(404, f"Library path does not exist: {library}")
 
     async def event_stream():
-        global _scan_running
         loop = asyncio.get_event_loop()
 
-        # Queue used to pass events from the worker thread to the async generator
         queue: asyncio.Queue = asyncio.Queue()
 
         def _run():
-            """Run in thread pool — puts each event into the queue as it happens."""
+            """Run in thread pool — puts each event into the queue as it arrives."""
             try:
-                for ev in scan_library_stream(library, cancel_event=_cancel_flag):
+                for ev in scan_library_stream(library, cancel_event=_ScanState.cancel_flag):
                     loop.call_soon_threadsafe(queue.put_nowait, ev)
-            except Exception as e:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 loop.call_soon_threadsafe(
-                    queue.put_nowait, {"type": "error", "msg": str(e)}
+                    queue.put_nowait, {"type": "error", "msg": str(exc)}
                 )
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
@@ -98,9 +99,9 @@ def trigger_scan():
                 etype = ev.get("type", "log")
                 yield f"event: {etype}\ndata: {json.dumps(ev)}\n\n"
         finally:
-            _scan_running = False
-            _cancel_flag.clear()
-            await asyncio.shield(future)   # ensure the thread is done
+            _ScanState.active = False
+            _ScanState.cancel_flag.clear()
+            await asyncio.shield(future)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -108,9 +109,9 @@ def trigger_scan():
 @router.delete("/scan", status_code=204, summary="Cancel running scan")
 def cancel_scan():
     """Signal the running scan to stop after the current file."""
-    if not _scan_running:
+    if not _ScanState.active:
         raise HTTPException(status_code=404, detail="No scan is currently running")
-    _cancel_flag.set()
+    _ScanState.cancel_flag.set()
 
 
 # ---------------------------------------------------------------------------

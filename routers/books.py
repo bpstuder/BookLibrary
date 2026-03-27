@@ -4,6 +4,8 @@ routers/books.py — CRUD for the book collection.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -13,17 +15,21 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-import logging
-
+import db.config as cfg
 from db.database import get_conn
 from db.models import (
     BookOut, BookUpdate,
     MoveRequest, SeriesOut, StatusUpdate, TagOut,
 )
+from services.covers import extract_cover
+from services.metadata import get_cached, _parse_db_row
 
 log = logging.getLogger("manga.books")
 
 router = APIRouter(prefix="/books", tags=["books"])
+
+# Whitelist of book-table columns that may appear in a SET clause
+_ALLOWED_BOOK_UPDATE_FIELDS = frozenset({"title", "series", "volume", "type", "category"})
 
 # Characters forbidden in filenames
 _FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -36,8 +42,8 @@ _FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 @router.get("", response_model=list[BookOut])
 def list_books(
     q:        Optional[str] = Query(None),
-    type:     Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
+    book_type: Optional[str] = Query(None, alias="type"),
+    category:  Optional[str] = Query(None),
     status:   Optional[str] = Query(None),
     series:   Optional[str] = Query(None),
     tag:      Optional[str] = Query(None),
@@ -46,6 +52,7 @@ def list_books(
     limit:    int = Query(50, le=500),
     offset:   int = Query(0),
 ):
+    """List and filter books with optional search, sort and pagination."""
     allowed_sorts = {"title", "series", "date_added", "volume", "category"}
     sort  = sort if sort in allowed_sorts else "title"
     order = "ASC" if order.lower() != "desc" else "DESC"
@@ -55,9 +62,9 @@ def list_books(
     if q:
         conditions.append("(b.title LIKE ? OR b.series LIKE ?)")
         params += [f"%{q}%", f"%{q}%"]
-    if type:
+    if book_type:
         conditions.append("b.type = ?")
-        params.append(type)
+        params.append(book_type)
     if category:
         conditions.append("b.category = ?")
         params.append(category)
@@ -117,6 +124,7 @@ def list_books(
 
 @router.get("/series", response_model=list[SeriesOut])
 def list_series(category: Optional[str] = Query(None)):
+    """List all series grouped by name with volume counts and status."""
     conditions, params = ["b.series IS NOT NULL AND b.series != ''"], []
     if category:
         conditions.append("b.category = ?")
@@ -161,6 +169,7 @@ def list_series(category: Optional[str] = Query(None)):
 
 @router.get("/stats/summary")
 def get_stats():
+    """Return aggregate statistics by type, category and reading status."""
     with get_conn() as conn:
         total    = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
         by_type  = {r["type"]: r["cnt"] for r in conn.execute(
@@ -174,6 +183,7 @@ def get_stats():
 
 @router.get("/tags/all", response_model=list[TagOut])
 def list_all_tags():
+    """Return all tags in alphabetical order."""
     with get_conn() as conn:
         rows = conn.execute("SELECT id, name FROM tags ORDER BY name").fetchall()
     return [{"id": r["id"], "name": r["name"]} for r in rows]
@@ -181,6 +191,7 @@ def list_all_tags():
 
 @router.get("/{book_id}", response_model=BookOut)
 def get_book(book_id: int):
+    """Return a single book by id, 404 if not found."""
     with get_conn() as conn:
         row = conn.execute(
             """
@@ -214,11 +225,10 @@ def get_book(book_id: int):
 
 @router.patch("/{book_id}", response_model=BookOut)
 def update_book(book_id: int, body: BookUpdate):
-    # Whitelist: only these columns may ever appear in a SET clause
-    _ALLOWED_BOOK_FIELDS = {"title", "series", "volume", "type", "category"}
+    """Update book fields (title, series, volume, type, category)."""
     fields = {
         k: v for k, v in body.model_dump(exclude_none=True).items()
-        if k in _ALLOWED_BOOK_FIELDS
+        if k in _ALLOWED_BOOK_UPDATE_FIELDS
     }
     if not fields:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -234,6 +244,7 @@ def update_book(book_id: int, body: BookUpdate):
 
 @router.delete("/{book_id}", status_code=204)
 def delete_book(book_id: int):
+    """Delete a book record (does not remove the file from disk)."""
     log.debug("books: DELETE id=%d", book_id)
     with get_conn() as conn:
         conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
@@ -245,6 +256,7 @@ def delete_book(book_id: int):
 
 @router.get("/{book_id}/cover")
 def get_cover(book_id: int):
+    """Serve the cover thumbnail for a book."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT cover_path FROM books WHERE id = ?", (book_id,)
@@ -263,6 +275,7 @@ def get_cover(book_id: int):
 
 @router.put("/{book_id}/status", response_model=BookOut)
 def set_status(book_id: int, body: StatusUpdate):
+    """Set reading status and optional page progress."""
     with get_conn() as conn:
         conn.execute(
             """
@@ -284,6 +297,7 @@ def set_status(book_id: int, body: StatusUpdate):
 
 @router.post("/{book_id}/tags/{tag_name}", status_code=201)
 def add_tag(book_id: int, tag_name: str):
+    """Add a tag to a book, creating it if needed."""
     tag_name = tag_name.strip().lower()
     if not tag_name:
         raise HTTPException(status_code=400, detail="Tag name cannot be empty")
@@ -301,6 +315,7 @@ def add_tag(book_id: int, tag_name: str):
 
 @router.delete("/{book_id}/tags/{tag_name}", status_code=204)
 def remove_tag(book_id: int, tag_name: str):
+    """Remove a tag from a book."""
     with get_conn() as conn:
         tag = conn.execute(
             "SELECT id FROM tags WHERE name = ?", (tag_name.strip().lower(),)
@@ -319,7 +334,7 @@ def remove_tag(book_id: int, tag_name: str):
 
 @router.get("/{book_id}/metadata")
 def get_book_metadata(book_id: int):
-    from services.metadata import get_cached
+    """Return all cached metadata rows for a book (backward compat alias)."""
     return get_cached(book_id)
 
 
@@ -328,6 +343,7 @@ def get_book_metadata(book_id: int):
 # ---------------------------------------------------------------------------
 
 class MovePreviewRequest(BaseModel):
+    """Request body for move preview (dry-run)."""
     pattern: str
 
 
@@ -336,8 +352,6 @@ def preview_move(book_id: int, body: MovePreviewRequest):
     """
     Return what the destination path would be without actually moving the file.
     """
-    import db.config as cfg
-
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
     if not row:
@@ -351,7 +365,7 @@ def preview_move(book_id: int, body: MovePreviewRequest):
     try:
         rel_path = body.pattern.format(**variables)
     except (KeyError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}") from e
 
     dest = (library / rel_path).with_suffix(src.suffix)
     return {
@@ -372,8 +386,6 @@ def move_book(book_id: int, body: MoveRequest):
 
     The path is relative to the library root (from config).
     """
-    import db.config as cfg
-
     with get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM books WHERE id = ?", (book_id,)
@@ -393,7 +405,7 @@ def move_book(book_id: int, body: MoveRequest):
     try:
         rel_path = body.pattern.format(**variables)
     except (KeyError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid pattern: {e}") from e
 
     dest = (library / rel_path).with_suffix(src.suffix)
 
@@ -410,7 +422,6 @@ def move_book(book_id: int, body: MoveRequest):
     shutil.copy2(src, dest)
 
     # Update DB
-    from services.covers import extract_cover
     new_size = dest.stat().st_size
     cover    = extract_cover(dest, book_id)
 
@@ -428,7 +439,7 @@ def move_book(book_id: int, body: MoveRequest):
     if body.delete_old:
         try:
             src.unlink()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass  # non-fatal
 
     return get_book(book_id)
@@ -465,10 +476,9 @@ def _strip_volume_suffix(title: str) -> str:
 
 def _row_to_book(row) -> BookOut:
     """Convert a raw SQLite row (with joined metadata columns) to a BookOut model."""
-    import json as _json
     d = dict(row)
     d["tags"]     = [t for t in (d.pop("tag_list", "") or "").split(",") if t]
-    d["authors"]  = _json.loads(d.pop("meta_authors",  None) or "[]")
+    d["authors"]  = json.loads(d.pop("meta_authors",  None) or "[]")
     d["synopsis"] = d.pop("meta_synopsis", None)
     if "category" not in d:
         d["category"] = "unknown"
@@ -476,7 +486,7 @@ def _row_to_book(row) -> BookOut:
 
 
 def _parse_meta_row(row) -> dict:
-    from services.metadata import _parse_db_row
+    """Parse a raw DB row into a metadata dict."""
     return _parse_db_row(row)
 
 

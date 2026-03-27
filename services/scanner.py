@@ -32,15 +32,20 @@ the same series string, in which case it just confirms the guess).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
+import db.config as cfg
 from db.database import get_conn
 from db.models import ScanResult
 from services.covers import extract_cover
+
+log = logging.getLogger("manga.scan")
 
 SUPPORTED = {".cbz", ".cbr", ".epub", ".pdf", ".mobi", ".azw3"}
 
@@ -72,7 +77,6 @@ _FOLDER_CATEGORY_RULES: list[tuple[str, set[str]]] = [
 
 def _normalise_folder_name(name: str) -> str:
     """Lowercase, strip accents, collapse separators."""
-    import unicodedata
     nfkd = unicodedata.normalize("NFKD", name)
     ascii_name = nfkd.encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[\s_\-]+", " ", ascii_name).strip().lower()
@@ -90,8 +94,6 @@ def _build_category_rules() -> list[tuple[str, set[str]]]:
 
     Built-ins still apply to any folder not claimed by a custom category.
     """
-    import db.config as cfg
-
     rules: list[tuple[str, set[str]]] = []
 
     # 1. Custom categories first — explicit user intent wins
@@ -230,7 +232,7 @@ def _load_scanignore(library_path: Path) -> set[str]:
             line = raw.strip()
             if line and not line.startswith("#"):
                 excluded.add(line)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
     return excluded
 
@@ -276,11 +278,6 @@ def _discover_files(library_path: Path) -> dict[str, Path]:
     Files sitting directly at library_path root (no subdirectory) are always
     included — the filter only applies to named top-level folders.
     """
-    import logging
-    import db.config as cfg
-
-    log = logging.getLogger("manga.scan")
-
     include: list[str] = cfg.get("scan_include", [])
     exclude: set[str]  = set(cfg.get("scan_exclude", []))
     scanignore = _load_scanignore(library_path)
@@ -354,9 +351,6 @@ def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
       3. Folder-based category override (keyword match on path segments)
       4. Extension-based category fallback
     """
-    import logging
-    log = logging.getLogger("manga.scan")
-
     title, filename_series, volume = _guess_metadata(path)
     book_type = _ext_to_type(path.suffix)
 
@@ -406,7 +400,7 @@ def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
             log.debug("Scan: cover extracted → %s", cover.name)
         else:
             log.debug("Scan: no cover for %s", path.name)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.debug("Scan: cover extraction failed for %s: %s", path.name, e)
 
     return "added"
@@ -424,9 +418,6 @@ def scan_library_stream(
     Generator that yields progress dicts for SSE streaming.
     Supports cancellation via cancel_event (threading.Event).
     """
-    import logging
-    log = logging.getLogger("manga.scan")
-
     try:
         # Phase 1 — discover all files on disk
         log.info("Scan: discovering files in %s", library_path)
@@ -471,7 +462,7 @@ def scan_library_stream(
                     added += 1
                     action = "added"
                     log.debug("Scan: added %s", path.name)
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     errors.append(f"{path.name}: {e}")
                     action = "error"
                     log.warning("Scan: error on %s: %s", path.name, e)
@@ -499,7 +490,7 @@ def scan_library_stream(
         log.info("Scan done: +%d added, -%d removed, %d errors", added, removed, len(errors))
         yield {"type": "done", "added": added, "removed": removed, "errors": errors}
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.exception("Scan failed: %s", e)
         yield {"type": "error", "msg": str(e)}
 

@@ -102,14 +102,14 @@ def load() -> dict[str, Any]:
     Priority: defaults < disk < env.
     Env vars always win over anything saved on disk.
     """
-    global _settings, _env_keys
+    global _settings, _env_keys  # pylint: disable=global-statement
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     on_disk: dict[str, Any] = {}
     if CONFIG_PATH.exists():
         try:
             on_disk = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             on_disk = {}
 
     env       = _read_env()
@@ -128,6 +128,7 @@ def load() -> dict[str, Any]:
 
 
 def get(key: str, default: Any = None) -> Any:
+    """Return a single config value, loading config if needed."""
     if not _settings:
         load()
     return _settings.get(key, default)
@@ -143,6 +144,7 @@ def get_all() -> dict[str, Any]:
 
 
 def is_env_locked(key: str) -> bool:
+    """Return True if key is currently overridden by an environment variable."""
     return key in _env_keys
 
 
@@ -160,7 +162,7 @@ def update(patch: dict[str, Any]) -> dict[str, Any]:
     if CONFIG_PATH.exists():
         try:
             on_disk = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
     # Apply patch to disk state

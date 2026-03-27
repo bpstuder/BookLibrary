@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import db.config as cfg
 from db.database import get_conn
 from db.models import BUILTIN_CATEGORIES, CategoryDef
+from services.scanner import _load_scanignore
 from services.scanner import SUPPORTED
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -98,7 +99,7 @@ def browse_directory(path: str = ""):
             "entries": entries,
         }
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied") from None
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,7 @@ def browse_directory(path: str = ""):
 # ---------------------------------------------------------------------------
 
 class VerifyRequest(BaseModel):
+    """Request body for path verification."""
     path: str
 
 
@@ -125,7 +127,7 @@ def verify_path(body: VerifyRequest):
     counts: dict[str, int] = {}
     total = 0
     try:
-        for root, _, files in os.walk(target):
+        for _, _, files in os.walk(target):
             for fname in files:
                 ext = Path(fname).suffix.lower()
                 if ext in SUPPORTED:
@@ -166,9 +168,6 @@ def list_scan_folders(subpath: str = ""):
     scan_include / scan_exclude store rel_path values (not bare names),
     so nested paths like "BD/Achille Talon" work correctly.
     """
-    from services.scanner import _load_scanignore
-
-    import db.config as _cfg_module
     raw_path = cfg.get("library_path", "")
     library  = Path(raw_path).expanduser().resolve() if raw_path else None
 
@@ -192,12 +191,12 @@ def list_scan_folders(subpath: str = ""):
 
     # Detect if library_path accidentally points to the application directory
     # (contains typical code files/folders — a common misconfiguration)
-    _CODE_MARKERS = {"main.py", "requirements.txt", "Dockerfile", "routers", "services", "db"}
-    _children_names = {c.name for c in library.iterdir()} if library.exists() else set()
-    if len(_CODE_MARKERS & _children_names) >= 3:
+    code_markers = {"main.py", "requirements.txt", "Dockerfile", "routers", "services", "db"}
+    children_names = {c.name for c in library.iterdir()} if library.exists() else set()
+    if len(code_markers & children_names) >= 3:
         return _not_ok(
             f"This looks like the application directory, not a media library "
-            f"({', '.join(sorted(_CODE_MARKERS & _children_names))} found). "
+            f"({', '.join(sorted(code_markers & children_names))} found). "
             f"Set the correct library path in Settings → Library."
         )
 
@@ -271,7 +270,7 @@ def list_scan_folders(subpath: str = ""):
                 "has_children": has_children,
             })
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied") from None
 
     return {
         "library":      str(library),
@@ -368,10 +367,9 @@ def delete_category(name: str):
 
 def _validate_category_name(name: str) -> None:
     """Enforce slug format: lowercase letters, digits, hyphens only."""
-    import re as _re
     if not name:
         raise HTTPException(400, "Category name cannot be empty")
-    if not _re.match(r'^[a-z0-9-]+$', name):
+    if not re.match(r'^[a-z0-9-]+$', name):
         raise HTTPException(
             400,
             f"Invalid category name '{name}'. "
@@ -384,6 +382,7 @@ def _validate_category_name(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 class RenameRequest(BaseModel):
+    """Request body for batch rename operation."""
     dry_run: bool = True          # default: preview only
     pattern: str = "{series} - T{volume:02d}"   # output filename template
     scope: str = "cbz"            # "cbz", "all"
@@ -412,11 +411,56 @@ def rename_all(body: RenameRequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+def _compute_new_path(
+    fpath: Path,
+    ext: str,
+    info: dict | None,
+    pattern: str,
+    library: Path,
+):
+    """
+    Compute the destination Path for a file given its DB info and a rename pattern.
+
+    Returns:
+      (new_path, rel_display)  on success
+      None                     if series/volume could not be determined
+      str (error message)      if the pattern is invalid
+    """
+    series   = info.get("series")   if info else None
+    volume   = info.get("volume")   if info else None
+    title    = info.get("title")    if info else None
+    category = info.get("category") if info else "unknown"
+    ftype    = info.get("type")     if info else ext.lstrip(".")
+
+    if not series or volume is None:
+        series_p, volume_p = _parse_name(fpath.stem)
+        series = series or series_p
+        volume = volume if volume is not None else volume_p
+
+    if not series or volume is None:
+        return None
+
+    clean_title = _strip_volume_suffix(title or series or fpath.stem)
+    try:
+        rel_path = pattern.format(
+            series=series,
+            volume=volume,
+            title=clean_title,
+            category=category or "unknown",
+            type=ftype or ext.lstrip("."),
+        )
+    except (KeyError, ValueError) as e:
+        return str(e)
+
+    parts    = rel_path.replace("\\", "/").split("/")
+    safe_rel = "/".join(_sanitize(p) for p in parts if p)
+    new_path = library / (safe_rel + ext)
+    return new_path, str(new_path.relative_to(library))
+
+
 def _do_rename(body: RenameRequest) -> list[str]:
     """Run the rename pass, return list of log lines."""
-    from db.config import get as cfg_get
-
-    library = Path(cfg_get("library_path")).expanduser().resolve()
+    library = Path(cfg.get("library_path")).expanduser().resolve()
     lines: list[str] = []
     renamed = skipped = errors = 0
 
@@ -437,61 +481,30 @@ def _do_rename(body: RenameRequest) -> list[str]:
 
     db_map = {r["path"]: dict(r) for r in rows}
 
-    for root, _, files in os.walk(library):
+    for walk_root, _, files in os.walk(library):
         for fname in sorted(files):
             ext = Path(fname).suffix.lower()
             if ext not in exts:
                 continue
 
-            fpath = Path(root) / fname
+            fpath = Path(walk_root) / fname
             info = db_map.get(str(fpath))
 
-            # Determine series and volume
-            series   = info.get("series")   if info else None
-            volume   = info.get("volume")   if info else None
-            title    = info.get("title")    if info else None
-            category = info.get("category") if info else "unknown"
-            ftype    = info.get("type")     if info else ext.lstrip(".")
-
-            # Fallback: parse from current filename
-            if not series or volume is None:
-                series_p, volume_p = _parse_name(fpath.stem)
-                series = series or series_p
-                volume = volume if volume is not None else volume_p
-
-            if not series or volume is None:
+            result = _compute_new_path(fpath, ext, info, body.pattern, library)
+            if result is None:
                 lines.append(f"  [skip]    {fpath.name}  — could not determine series/volume")
                 skipped += 1
                 continue
-
-            # Build new name — volume is int so {volume:02d} works
-            # title in DB often contains "Series T01" — strip the volume suffix for cleaner output
-            clean_title = _strip_volume_suffix(title or series or fpath.stem)
-
-            try:
-                rel_path = body.pattern.format(
-                    series=series,
-                    volume=volume,          # int, supports :02d
-                    title=clean_title,
-                    category=category or "unknown",
-                    type=ftype or ext.lstrip("."),
-                )
-            except (KeyError, ValueError) as e:
-                lines.append(f"  [error]   {fpath.name}  — bad pattern: {e}")
+            if isinstance(result, str):   # pattern error message
+                lines.append(f"  [error]   {fpath.name}  — {result}")
                 errors += 1
                 continue
-
-            # Sanitize each path segment individually to preserve directory separators
-            parts    = rel_path.replace("\\", "/").split("/")
-            safe_rel = "/".join(_sanitize(p) for p in parts if p)
-            new_path = library / (safe_rel + ext)
+            new_path, rel_display = result
 
             if new_path == fpath:
                 lines.append(f"  [ok]      {fpath.name}  — already correct")
                 skipped += 1
                 continue
-
-            rel_display = str(new_path.relative_to(library))
             lines.append(
                 f"  {'[dry-run]' if body.dry_run else '[rename] '}"
                 f"  {fpath.name}  →  {rel_display}"
@@ -509,7 +522,7 @@ def _do_rename(body: RenameRequest) -> list[str]:
                             (str(new_path), str(fpath)),
                         )
                     renamed += 1
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     lines.append(f"  [error]   {fpath.name}  — {e}")
                     errors += 1
             else:

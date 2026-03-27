@@ -18,6 +18,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -36,15 +37,13 @@ def _load_dotenv() -> None:
     if not env_path.exists():
         return
 
-    # Try python-dotenv first (handles comments, quotes, multiline, etc.)
     try:
-        from dotenv import load_dotenv  # type: ignore
-        load_dotenv(env_path, override=False)  # don't override already-set vars
+        from dotenv import load_dotenv  # type: ignore  # pylint: disable=import-outside-toplevel
+        load_dotenv(env_path, override=False)
         return
     except ImportError:
         pass
 
-    # Fallback: parse .env manually
     with open(env_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -53,7 +52,7 @@ def _load_dotenv() -> None:
             key, _, value = line.partition("=")
             key   = key.strip()
             value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:   # don't override shell env vars
+            if key and key not in os.environ:
                 os.environ[key] = value
 
 
@@ -67,10 +66,11 @@ _load_dotenv()  # must run before any local import that calls os.getenv()
 def _setup_logging(debug: bool) -> None:
     """
     Configure the root logger.
-    - force=True replaces any handlers uvicorn may have installed.
-    - All manga.* loggers inherit from root (they use NOTSET by default).
-    - Called from main() before uvicorn.run(), and from lifespan for the
-      'uvicorn main:app' external-server case.
+
+    force=True replaces any handlers uvicorn may have installed.
+    All manga.* loggers inherit from root (they use NOTSET by default).
+    Called from main() before uvicorn.run(), and from lifespan for the
+    'uvicorn main:app' external-server case.
     """
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
@@ -88,18 +88,18 @@ def _setup_logging(debug: bool) -> None:
 # Local imports (after .env is loaded)
 # ---------------------------------------------------------------------------
 
-import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+import uvicorn                                    # noqa: E402
+from fastapi import FastAPI, Request              # noqa: E402
+from fastapi.responses import HTMLResponse        # noqa: E402
+from fastapi.staticfiles import StaticFiles       # noqa: E402
 
-import db.config as cfg
-from db.database import DB_PATH  # import triggers auto-init
-from routers.books import router as books_router
-from routers.config import router as config_router
-from routers.library import router as library_router
-from routers.metadata import router as metadata_router
-from routers.batch import router as batch_router
+import db.config as cfg                           # noqa: E402
+from db.database import DB_PATH                  # noqa: E402  (triggers auto-init)
+from routers.books    import router as books_router     # noqa: E402
+from routers.config   import router as config_router    # noqa: E402
+from routers.library  import router as library_router   # noqa: E402
+from routers.metadata import router as metadata_router  # noqa: E402
+from routers.batch    import router as batch_router     # noqa: E402
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR   = Path(__file__).parent / "static"
@@ -110,6 +110,7 @@ STATIC_DIR   = Path(__file__).parent / "static"
 # ---------------------------------------------------------------------------
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments, ignoring uvicorn's own flags."""
     parser = argparse.ArgumentParser(description="Manga Collection server")
     parser.add_argument("--debug",   action="store_true",
                         help="Enable debug mode (verbose logs + /debug + /docs)")
@@ -117,7 +118,7 @@ def _parse_args() -> argparse.Namespace:
                         help="HTTP port (overrides .env / config)")
     parser.add_argument("--library", type=str, default=None,
                         help="Library path (overrides .env / config)")
-    return parser.parse_known_args()[0]   # ignore uvicorn's own args
+    return parser.parse_known_args()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +126,11 @@ def _parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def create_app(debug: bool = False) -> FastAPI:
+    """Create and configure the FastAPI application."""
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(_app: FastAPI):  # parameter name avoids shadowing outer 'app'
+        """ASGI lifespan: run startup tasks, then yield."""
         settings = cfg.load()
         library  = Path(settings["library_path"]).expanduser()
         library.mkdir(parents=True, exist_ok=True)
@@ -155,7 +158,7 @@ def create_app(debug: bool = False) -> FastAPI:
 
         if settings.get("scan_on_startup"):
             logger.info("Auto-scanning library on startup...")
-            from services.scanner import scan_library
+            from services.scanner import scan_library  # pylint: disable=import-outside-toplevel
             result = scan_library(library)
             logger.info("Scan done: +%d added, %d removed, %d errors",
                         result.added, result.removed, len(result.errors))
@@ -177,26 +180,8 @@ def create_app(debug: bool = False) -> FastAPI:
     _app.include_router(config_router)
 
     if debug:
-        from routers.debug import router as debug_router
+        from routers.debug import router as debug_router  # pylint: disable=import-outside-toplevel
         _app.include_router(debug_router)
-
-    @_app.get("/", response_class=HTMLResponse)
-    async def index():
-        return (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
-
-    @_app.head("/")
-    async def index_head():
-        """HEAD / for healthchecks and reverse-proxy probes."""
-        return HTMLResponse(content="", status_code=200)
-
-    @_app.head("/", status_code=200)
-    async def index_head():
-        """HEAD / — used by reverse proxies and health checkers."""
-        return None
-
-    if debug:
-        import time
-        from fastapi import Request
 
         @_app.middleware("http")
         async def _log_requests(request: Request, call_next):
@@ -212,6 +197,16 @@ def create_app(debug: bool = False) -> FastAPI:
             )
             return response
 
+    @_app.get("/", response_class=HTMLResponse)
+    async def index():
+        """Serve the single-page application."""
+        return (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
+
+    @_app.head("/", status_code=200)
+    async def index_head():
+        """HEAD / — used by reverse proxies and health checkers."""
+        return None
+
     @_app.get("/health")
     async def health():
         """Lightweight health check endpoint. Returns 200 + status."""
@@ -223,7 +218,6 @@ def create_app(debug: bool = False) -> FastAPI:
 # ---------------------------------------------------------------------------
 # Module-level app — used when uvicorn is launched externally:
 #   uvicorn main:app
-# The reload case is handled below via the import-string form.
 # ---------------------------------------------------------------------------
 
 cfg.load()
@@ -235,9 +229,9 @@ app = create_app(debug=cfg.get("debug", False))
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """CLI entry point: parse args, configure and launch uvicorn."""
     args = _parse_args()
 
-    # Apply CLI overrides on top of .env + disk config
     overrides: dict = {}
     if args.debug:
         overrides["debug"] = True
@@ -251,8 +245,6 @@ def main() -> None:
     debug = cfg.get("debug", False)
     port  = cfg.get("port",  8000)
 
-    # Set up logging immediately — before uvicorn starts and potentially
-    # installs its own handlers that would shadow ours.
     _setup_logging(debug)
 
     if debug:
@@ -265,12 +257,8 @@ def main() -> None:
         print("╚══════════════════════════════════════╝")
         print(f"  Library : {cfg.get('library_path')}")
         print(f"  Port    : {port}")
-
-    if debug:
-        # reload=True requires an import string, not an app object.
-        # uvicorn will re-import "main:app" on every file change.
         uvicorn.run(
-            "main:app",          # <-- import string
+            "main:app",
             host="0.0.0.0",
             port=port,
             reload=True,
@@ -278,9 +266,6 @@ def main() -> None:
             log_level="debug",
         )
     else:
-        # Normal mode: pass the already-built app object directly (faster startup).
-        global app
-        app = create_app(debug=False)
         uvicorn.run(
             app,
             host="0.0.0.0",

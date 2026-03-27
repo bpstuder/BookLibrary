@@ -1,0 +1,30 @@
+[MAIN]
+# Only analyse these extensions
+source-roots = .
+
+[MESSAGES CONTROL]
+disable =
+    # Pydantic models legitimately have no public methods — all their
+    # "methods" are generated at runtime by the metaclass.
+    too-few-public-methods,
+
+    # FastAPI's list_books() and save_settings() have many Query/Body params
+    # by design. Splitting them adds boilerplate with no clarity gain.
+    too-many-arguments,
+    too-many-positional-arguments,
+
+    # Import-order issues in main.py are structural: local imports must come
+    # after _load_dotenv() which reads .env before any local module is loaded.
+    wrong-import-position,
+
+    # E0401 — pylint can't resolve installed packages in CI without a venv
+    import-error
+
+[FORMAT]
+max-line-length = 100
+
+[DESIGN]
+# Raise thresholds for complex endpoint handlers
+max-locals = 22
+max-branches = 15
+max-statements = 65

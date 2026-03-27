@@ -14,17 +14,17 @@ from __future__ import annotations
 import asyncio
 import json
 
-from typing import Optional
-
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from db.database import get_conn
 from services.metadata import (
+    _sidecar_path,
     fetch_and_store, get_cached, pin_metadata,
     save_manual, apply_to_book, enabled_sources,
 )
+from services.standardizer import standardize_book
 
 router = APIRouter(prefix="/batch", tags=["batch"])
 
@@ -34,6 +34,7 @@ router = APIRouter(prefix="/batch", tags=["batch"])
 # ---------------------------------------------------------------------------
 
 class BatchFetchRequest(BaseModel):
+    """Request body for batch metadata scraping."""
     book_ids:      list[int]
     source:        str
     auto_pin:      bool  = True    # pin the highest-score result automatically
@@ -43,6 +44,7 @@ class BatchFetchRequest(BaseModel):
 
 
 class BatchApplyRequest(BaseModel):
+    """Apply pinned metadata fields to book records."""
     book_ids: list[int]
     fields:   list[str] = [
         "title", "series", "synopsis", "authors", "genres", "year", "publisher"
@@ -61,6 +63,7 @@ class BatchEditRequest(BaseModel):
 
 
 class BatchDeleteRequest(BaseModel):
+    """Delete metadata cache rows for a list of books."""
     book_ids:      list[int]
     keep_manual:   bool = True   # keep user-entered manual entries, only delete scraped
 
@@ -146,7 +149,10 @@ def batch_fetch(body: BatchFetchRequest):
                         best = _pick_best(results, body.min_score)
                         if best and best.get("id"):
                             pin_metadata(book_id, best["id"])
-                            score_str = f" (score {best.get('score', '?')}/10)" if best.get("score") else ""
+                            score_str = (
+                                f" (score {best.get('score', '?')}/10)"
+                                if best.get("score") else ""
+                            )
                             title_str = best.get("title") or best.get("_title") or ""
                             yield _log(
                                 f"  [{i+1}/{total}] {display} → pinned: {title_str}{score_str}"
@@ -161,7 +167,7 @@ def batch_fetch(body: BatchFetchRequest):
                             f"  [{i+1}/{total}] {display} — {len(results)} results fetched"
                         )
                     ok += 1
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield _log(f"  [{i+1}/{total}] {display} — error: {e}", "error")
                 failed += 1
 
@@ -232,7 +238,7 @@ def batch_apply(body: BatchApplyRequest):
                 applied = [f for f in body.fields if best.get(f)]
                 yield _log(f"  [{i+1}/{total}] {display} — applied: {', '.join(applied)}")
                 ok += 1
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield _log(f"  [{i+1}/{total}] {display} — error: {e}", "error")
                 failed += 1
 
@@ -297,7 +303,7 @@ def batch_edit(body: BatchEditRequest):
 
                 yield _log(f"  [{i+1}/{total}] {display} — ok")
                 ok += 1
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield _log(f"  [{i+1}/{total}] {display} — error: {e}", "error")
                 failed += 1
 
@@ -353,7 +359,6 @@ def batch_delete(body: BatchDeleteRequest):
             yield _progress(i + 1, total, display or str(book_id))
             await asyncio.sleep(0)
 
-        from services.metadata import _sidecar_path
         for book_id in body.book_ids:
             sp = _sidecar_path(book_id)
             if sp.exists():
@@ -422,6 +427,7 @@ def _pick_best(results: list[dict], min_score: float) -> dict | None:
 # ---------------------------------------------------------------------------
 
 class BatchWebpRequest(BaseModel):
+    """Convert CBZ/CBR files to WebP images for a list of books."""
     book_ids:    list[int]
     webp_quality: int  = 85
     delete_old:  bool = False   # delete original CBZ after conversion
@@ -433,8 +439,6 @@ def batch_convert_webp(body: BatchWebpRequest):
     Convert CBZ/CBR files to WebP images in-archive for a list of books.
     Streams progress via SSE. Only CBZ/CBR files are processed.
     """
-    from services.standardizer import standardize_book
-
     async def stream():
         total  = len(body.book_ids)
         ok = skipped = failed = 0
@@ -477,7 +481,7 @@ def batch_convert_webp(body: BatchWebpRequest):
                 else:
                     yield _log(f"  [{i+1}/{total}] {display} — ✓ converted")
                     ok += 1
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield _log(f"  [{i+1}/{total}] {display} — error: {e}", "error")
                 failed += 1
 
