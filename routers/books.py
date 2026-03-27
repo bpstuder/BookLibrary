@@ -83,6 +83,11 @@ def list_books(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     # Join best metadata row: pinned first, then manual, then highest score, then most recent
+    # When sorting by series, always use volume ASC as secondary key so tomes
+    # within a series appear in the correct reading order regardless of the
+    # direction of the primary sort.
+    secondary_sort = ", b.volume ASC NULLS LAST" if sort == "series" else ""
+
     sql = f"""
         SELECT b.*,
                rs.status, rs.progress, rs.last_read,
@@ -108,7 +113,7 @@ def list_books(
         ) mc ON mc.book_id = b.id AND mc.rn = 1
         {where}
         GROUP BY b.id
-        ORDER BY b.{sort} {order}
+        ORDER BY b.{sort} {order}{secondary_sort}
         LIMIT ? OFFSET ?
     """
     params += [limit, offset]
