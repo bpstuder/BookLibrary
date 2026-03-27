@@ -9,7 +9,6 @@ DO NOT expose this endpoint in production.
 
 from __future__ import annotations
 
-import os
 import platform
 import sys
 from pathlib import Path
@@ -18,7 +17,7 @@ from fastapi import APIRouter
 
 import db.config as cfg
 from db.database import DB_PATH, get_conn
-from services.scanner import SUPPORTED
+from routers._utils import count_supported_files
 
 router = APIRouter(prefix="/debug", tags=["debug"])
 
@@ -87,15 +86,8 @@ def _library_info(library_path: str) -> dict:
     if not target.is_dir():
         return {"status": "not_a_directory", "path": str(target)}
 
-    counts: dict[str, int] = {}
-    total = 0
     try:
-        for _, _, files in os.walk(target):
-            for fname in files:
-                ext = Path(fname).suffix.lower()
-                if ext in SUPPORTED:
-                    counts[ext.lstrip(".")] = counts.get(ext.lstrip("."), 0) + 1
-                    total += 1
+        total, counts = count_supported_files(target)
         return {
             "status":      "ok",
             "path":        str(target),

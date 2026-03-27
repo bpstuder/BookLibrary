@@ -28,8 +28,8 @@ from pydantic import BaseModel
 import db.config as cfg
 from db.database import get_conn
 from db.models import BUILTIN_CATEGORIES, CategoryDef
-from services.scanner import _load_scanignore
-from services.scanner import SUPPORTED
+from routers._utils import count_supported_files, stream_lines
+from services.scanner import _load_scanignore, SUPPORTED
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -124,16 +124,8 @@ def verify_path(body: VerifyRequest):
     if not target.is_dir():
         return {"valid": False, "error": f"Not a directory: {target}"}
 
-    counts: dict[str, int] = {}
-    total = 0
     try:
-        for _, _, files in os.walk(target):
-            for fname in files:
-                ext = Path(fname).suffix.lower()
-                if ext in SUPPORTED:
-                    key = ext.lstrip(".")
-                    counts[key] = counts.get(key, 0) + 1
-                    total += 1
+        total, counts = count_supported_files(target)
     except PermissionError as e:
         return {"valid": False, "error": str(e)}
 
@@ -399,14 +391,8 @@ def rename_all(body: RenameRequest):
     async def stream():
         loop = asyncio.get_event_loop()
         lines = await loop.run_in_executor(None, _do_rename, body)
-        for line in lines:
-            if line.startswith("DONE:"):
-                yield f"event: done\ndata: {line[5:]}\n\n"
-            elif line.startswith("ERROR:"):
-                yield f"event: error\ndata: {line[6:]}\n\n"
-            else:
-                yield f"event: log\ndata: {line}\n\n"
-            await asyncio.sleep(0)
+        async for chunk in stream_lines(lines):
+            yield chunk
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

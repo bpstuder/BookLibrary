@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 
 import db.config as cfg
 from db.models import StandardizeRequest
+from routers._utils import stream_lines
 from services.scanner import scan_library_stream
 from services.standardizer import standardize_book
 
@@ -137,13 +138,7 @@ def standardize(book_id: int, body: StandardizeRequest):
 
         lines = await loop.run_in_executor(None, _run)
 
-        for line in lines:
-            if line.startswith("DONE:"):
-                yield f"event: done\ndata: {line[5:]}\n\n"
-            elif line.startswith("ERROR:"):
-                yield f"event: error\ndata: {line[6:]}\n\n"
-            else:
-                yield f"event: log\ndata: {line}\n\n"
-            await asyncio.sleep(0)
+        async for chunk in stream_lines(lines):
+            yield chunk
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
