@@ -13,11 +13,15 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import logging
+
 from db.database import get_conn
 from db.models import (
     BookOut, BookUpdate,
     MoveRequest, SeriesOut, StatusUpdate, TagOut,
 )
+
+log = logging.getLogger("manga.books")
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -210,9 +214,15 @@ def get_book(book_id: int):
 
 @router.patch("/{book_id}", response_model=BookOut)
 def update_book(book_id: int, body: BookUpdate):
-    fields = body.model_dump(exclude_none=True)
+    # Whitelist: only these columns may ever appear in a SET clause
+    _ALLOWED_BOOK_FIELDS = {"title", "series", "volume", "type", "category"}
+    fields = {
+        k: v for k, v in body.model_dump(exclude_none=True).items()
+        if k in _ALLOWED_BOOK_FIELDS
+    }
     if not fields:
         raise HTTPException(status_code=400, detail="Nothing to update")
+    log.debug("books: PATCH id=%d — %s", book_id, fields)
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     with get_conn() as conn:
         conn.execute(
@@ -224,6 +234,7 @@ def update_book(book_id: int, body: BookUpdate):
 
 @router.delete("/{book_id}", status_code=204)
 def delete_book(book_id: int):
+    log.debug("books: DELETE id=%d", book_id)
     with get_conn() as conn:
         conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
 
@@ -395,6 +406,7 @@ def move_book(book_id: int, body: MoveRequest):
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
+    log.debug("books: move id=%d  %s → %s", book_id, src.name, dest)
     shutil.copy2(src, dest)
 
     # Update DB

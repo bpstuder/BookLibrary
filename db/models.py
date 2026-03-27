@@ -9,8 +9,27 @@ from pydantic import BaseModel, ConfigDict
 
 
 BookType   = Literal["cbz", "cbr", "epub", "pdf", "mobi", "azw3", "unknown"]
-BookCat    = Literal["manga", "comics", "book", "unknown"]
 ReadStatus = Literal["unread", "reading", "read"]
+
+# BookCat is intentionally open (str) so user-defined categories are accepted
+# everywhere without needing to regenerate the Literal on each config change.
+# The built-in values are: "manga", "comics", "book", "unknown".
+BookCat = str
+
+# Built-in categories — used for validation hints and UI defaults.
+BUILTIN_CATEGORIES: tuple[str, ...] = ("manga", "comics", "book", "unknown")
+
+
+# ---------------------------------------------------------------------------
+# Custom category definition
+# ---------------------------------------------------------------------------
+
+class CategoryDef(BaseModel):
+    """A user-defined category stored in config.json under 'custom_categories'."""
+    name:    str            # slug used in DB, e.g. "light-novel"
+    label:   str            # display name, e.g. "Light novels"
+    folders: list[str] = [] # 1st-level folder names that auto-map to this category
+    color:   str       = "" # optional hex color hint for the UI, e.g. "#7F77DD"
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +50,11 @@ class BookCreate(BookBase):
 
 
 class BookUpdate(BaseModel):
-    title:    Optional[str]      = None
-    series:   Optional[str]      = None
-    volume:   Optional[int]      = None
+    title:    Optional[str]     = None
+    series:   Optional[str]     = None
+    volume:   Optional[int]     = None
     type:     Optional[BookType] = None
-    category: Optional[BookCat]  = None
+    category: Optional[BookCat] = None
 
 
 class BookOut(BookBase):
@@ -184,7 +203,7 @@ class StandardizeRequest(BaseModel):
 class BookFilters(BaseModel):
     q:        Optional[str]        = None
     type:     Optional[BookType]   = None
-    category: Optional[BookCat]    = None
+    category: Optional[str]         = None  # accepts built-in and custom categories
     status:   Optional[ReadStatus] = None
     series:   Optional[str]        = None
     tag:      Optional[str]        = None

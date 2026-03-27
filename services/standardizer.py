@@ -8,7 +8,7 @@ After success: updates the DB, refreshes cover, optionally deletes original.
 from __future__ import annotations
 
 import io
-import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Generator
 
@@ -52,11 +52,6 @@ def standardize_book(
                 log_lines.append(s.rstrip())
         def flush(self): pass
 
-    # NOTE: stdout redirect is not thread-safe under concurrent requests.
-    # Acceptable for now since standardization is user-initiated and slow.
-    real_stdout = sys.stdout
-    sys.stdout  = _Capture()
-
     def _no_prompt(prompt: str) -> str:
         log_lines.append("  [warn]    Skipping interactive prompt in web mode")
         return ""
@@ -64,18 +59,20 @@ def standardize_book(
     cbz._ask = _no_prompt
 
     try:
-        output_path = cbz.process_cbz(
-            cbz_path=cbz_path,
-            output_dir=cbz_path.parent,
-            csv_mapping=None,
-            rename_pages_meta=False,
-            webp=webp,
-            webp_quality=webp_quality,
-            dry_run=False,
-            verbose=True,
-        )
+        # redirect_stdout is a context manager: stdout is always restored on exit,
+        # even if an exception is raised — safe under concurrent requests.
+        with redirect_stdout(_Capture()):
+            output_path = cbz.process_cbz(
+                cbz_path=cbz_path,
+                output_dir=cbz_path.parent,
+                csv_mapping=None,
+                rename_pages_meta=False,
+                webp=webp,
+                webp_quality=webp_quality,
+                dry_run=False,
+                verbose=True,
+            )
 
-        sys.stdout = real_stdout
         for line in log_lines:
             yield line
 
@@ -112,7 +109,6 @@ def standardize_book(
         yield f"DONE:{output_path}"
 
     except Exception as e:
-        sys.stdout = real_stdout
         for line in log_lines:
             yield line
         yield f"ERROR:{e}"

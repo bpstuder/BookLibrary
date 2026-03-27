@@ -61,6 +61,30 @@ _load_dotenv()  # must run before any local import that calls os.getenv()
 
 
 # ---------------------------------------------------------------------------
+# Logging setup — called early so every module gets the right level
+# ---------------------------------------------------------------------------
+
+def _setup_logging(debug: bool) -> None:
+    """
+    Configure the root logger.
+    - force=True replaces any handlers uvicorn may have installed.
+    - All manga.* loggers inherit from root (they use NOTSET by default).
+    - Called from main() before uvicorn.run(), and from lifespan for the
+      'uvicorn main:app' external-server case.
+    """
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+    # Silence noisy third-party loggers even in debug mode
+    for noisy in ("httpx", "httpcore", "multipart", "watchfiles"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
 # Local imports (after .env is loaded)
 # ---------------------------------------------------------------------------
 
@@ -109,13 +133,7 @@ def create_app(debug: bool = False) -> FastAPI:
         library.mkdir(parents=True, exist_ok=True)
         # init_db() is called automatically when db.database is imported
 
-        log_level = logging.DEBUG if settings.get("debug") else logging.INFO
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-            stream=sys.stdout,
-            force=True,
-        )
+        _setup_logging(bool(settings.get("debug")))
         logger = logging.getLogger("manga")
         logger.info("Library : %s", library.resolve())
         logger.info("Database: %s", DB_PATH.resolve())
@@ -125,6 +143,15 @@ def create_app(debug: bool = False) -> FastAPI:
                 k: ("***" if "key" in k and v else v)
                 for k, v in settings.items()
             })
+            logger.debug(
+                "Scan filters — include: %s  exclude: %s",
+                settings.get("scan_include") or "(all)",
+                settings.get("scan_exclude") or "(none)",
+            )
+            logger.debug(
+                "Custom categories: %s",
+                [c.get("name") for c in settings.get("custom_categories", [])] or "(none)",
+            )
 
         if settings.get("scan_on_startup"):
             logger.info("Auto-scanning library on startup...")
@@ -137,6 +164,7 @@ def create_app(debug: bool = False) -> FastAPI:
     _app = FastAPI(
         title="BookLibrary",
         version="1.0.0",
+        lifespan=lifespan,
         docs_url ="/docs"  if debug else None,
         redoc_url="/redoc" if debug else None,
     )
@@ -165,6 +193,24 @@ def create_app(debug: bool = False) -> FastAPI:
     async def index_head():
         """HEAD / — used by reverse proxies and health checkers."""
         return None
+
+    if debug:
+        import time
+        from fastapi import Request
+
+        @_app.middleware("http")
+        async def _log_requests(request: Request, call_next):
+            """Log every API request with method, path, status and duration."""
+            _log = logging.getLogger("manga.http")
+            t0 = time.perf_counter()
+            response = await call_next(request)
+            ms = (time.perf_counter() - t0) * 1000
+            _log.debug(
+                "%s %s → %d  (%.1f ms)",
+                request.method, request.url.path,
+                response.status_code, ms,
+            )
+            return response
 
     @_app.get("/health")
     async def health():
@@ -204,6 +250,10 @@ def main() -> None:
 
     debug = cfg.get("debug", False)
     port  = cfg.get("port",  8000)
+
+    # Set up logging immediately — before uvicorn starts and potentially
+    # installs its own handlers that would shadow ours.
+    _setup_logging(debug)
 
     if debug:
         print("╔══════════════════════════════════════╗")

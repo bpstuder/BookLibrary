@@ -13,6 +13,18 @@ Key design rules:
   - Env-locked values are NOT written to config.json (they live in .env).
   - The UI can save any value; it takes effect when the env var is removed.
   - get_all() returns env-locked keys marked so the UI can show them as read-only.
+
+Scan folder filtering (1st-level subdirectories of library_path only):
+  scan_include  — list of folder names to scan exclusively.
+                  Empty list (default) = scan everything.
+  scan_exclude  — list of folder names to always skip.
+                  Takes priority over scan_include.
+  .scanignore   — plain-text file at library root, one folder name per line.
+                  Lines starting with # are comments. Merged with scan_exclude
+                  at scan time; never written to config.json.
+  Env overrides:
+    SCAN_INCLUDE=Manga,BD        (comma-separated)
+    SCAN_EXCLUDE=Downloads,Inbox (comma-separated)
 """
 
 from __future__ import annotations
@@ -22,12 +34,24 @@ import os
 from pathlib import Path
 from typing import Any
 
-CONFIG_PATH = Path(__file__).parent.parent / "data" / "config.json"
+CONFIG_PATH   = Path(__file__).parent.parent / "data" / "config.json"
+# Default library path anchored to the project root so it resolves correctly
+# regardless of the working directory when the server is started.
+_DEFAULT_LIBRARY = str(Path(__file__).parent.parent / "library")
 
 _BASE_DEFAULTS: dict[str, Any] = {
-    "library_path":               "./library",
+    "library_path":               _DEFAULT_LIBRARY,
     "scan_on_startup":            False,
     "supported_formats":          ["cbz", "cbr", "epub", "pdf", "mobi", "azw3"],
+    # Scan folder filtering — 1st-level subdirectories only.
+    # scan_include: [] means "scan everything" (default behaviour, fully backward-compatible).
+    # scan_exclude always wins over scan_include.
+    "scan_include":               [],   # e.g. ["Manga", "BD"]
+    "scan_exclude":               [],   # e.g. ["Downloads", "Inbox"]
+    # Custom categories — list of {name, label, folders, color} dicts.
+    # Built-in categories (manga, comics, book, unknown) are always available.
+    # Custom categories extend the built-ins; they are never env-locked.
+    "custom_categories":          [],
     "std_webp":                   False,
     "std_webp_quality":           85,
     "std_rename":                 True,
@@ -64,6 +88,12 @@ def _read_env() -> dict[str, Any]:
             out["port"] = int(v)
         except ValueError:
             pass
+    # SCAN_INCLUDE / SCAN_EXCLUDE: comma-separated folder names, spaces trimmed.
+    # e.g.  SCAN_INCLUDE=Manga,BD,Webtoons
+    if v := os.getenv("SCAN_INCLUDE", ""):
+        out["scan_include"] = [f.strip() for f in v.split(",") if f.strip()]
+    if v := os.getenv("SCAN_EXCLUDE", ""):
+        out["scan_exclude"] = [f.strip() for f in v.split(",") if f.strip()]
     return out
 
 

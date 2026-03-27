@@ -16,12 +16,71 @@ let fbCurrentPath    = '';
 let selectedMetaId   = null;
 let _lastFetchSource = null;   // track which source was last fetched
 
+// All categories: built-ins + user-defined, loaded once at boot.
+// Shape: [{name, label, folders, color, is_builtin}]
+let allCategories    = [
+  {name:'manga',   label:'Manga',   folders:[], color:'', is_builtin:true},
+  {name:'comics',  label:'Comics',  folders:[], color:'', is_builtin:true},
+  {name:'book',    label:'Books',   folders:[], color:'', is_builtin:true},
+  {name:'unknown', label:'Unknown', folders:[], color:'', is_builtin:true},
+];
+
+async function loadCategories() {
+  try {
+    allCategories = await api('/config/categories');
+    _rebuildSidebarCategoryNavItems();
+    _rebuildBatchCategoryFilter();
+  } catch (_) { /* keep defaults */ }
+}
+
+// Return inline style for a category badge (custom color overrides CSS classes)
+function catBadgeStyle(cat) {
+  const def = allCategories.find(c => c.name === cat);
+  if (def && def.color && !def.is_builtin) {
+    // Derive a readable text color from the custom color by lightening it
+    return ` style="background:${def.color}22;color:${def.color};border-color:${def.color}44"`;
+  }
+  return '';
+}
+
+// Rebuild sidebar nav category items dynamically
+function _rebuildSidebarCategoryNavItems() {
+  const nav = document.getElementById('sidebar-cat-items');
+  if (!nav) return;
+  const ICONS = {manga:'📖', comics:'💥', book:'📕'};
+  nav.innerHTML = allCategories
+    .filter(c => c.name !== 'unknown')
+    .map(c => {
+      const icon = ICONS[c.name] || '🗂';
+      const view = c.name === 'book' ? 'books' : c.name;
+      return `<div class="nav-item" data-view="${view}" onclick="setView('${view}')">`+
+             `<span class="nav-icon">${icon}</span> ${esc(c.label)}</div>`;
+    }).join('');
+  // Re-highlight active
+  document.querySelectorAll('.nav-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.view === currentView));
+}
+
+function _rebuildBatchCategoryFilter() {
+  const opts = allCategories.filter(c => c.name !== 'unknown')
+    .map(c => `<option value="${c.name}">${esc(c.label)}</option>`).join('');
+
+  const sel = document.getElementById('batch-filter-cat');
+  if (sel) sel.innerHTML = '<option value="">All categories</option>' + opts;
+
+  // Also populate the select-bar quick category picker
+  const selBar = document.getElementById('sel-bar-cat');
+  if (selBar) selBar.innerHTML = '<option value="">🗂 Category…</option>' + opts;
+}
+
 // Table columns visibility — stored in localStorage
 const ALL_COLUMNS = ['cover','title','series','volume','authors','format','category','status','size'];
 let visibleColumns = JSON.parse(localStorage.getItem('tbl_cols') || 'null')
   || ['cover','title','series','volume','format','category','status'];
 
-const VIEW_FILTERS = {
+// Static filters for built-in views.
+// Custom category views are resolved dynamically in _viewFilter().
+const _BUILTIN_VIEW_FILTERS = {
   all:     {},
   manga:   { category: 'manga' },
   comics:  { category: 'comics' },
@@ -32,12 +91,20 @@ const VIEW_FILTERS = {
   series:  null,
 };
 
+// Resolve the API filter params for any view, including custom categories.
+function _viewFilter(view) {
+  if (view in _BUILTIN_VIEW_FILTERS) return _BUILTIN_VIEW_FILTERS[view];
+  // Custom category: the view name IS the category slug
+  const cat = allCategories.find(c => c.name === view);
+  if (cat) return { category: cat.name };
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
-  loadStats();
-  loadBooks();
+  loadCategories().then(() => { loadStats(); loadBooks(); });
   // Apply saved layout
   _applyLayout(currentLayout, false);
 });
@@ -159,7 +226,7 @@ async function loadBooks() {
   const selSort = document.getElementById('filter-sort').value;
   if (selSort) currentSortField = selSort;
 
-  const extra  = VIEW_FILTERS[currentView] || {};
+  const extra  = _viewFilter(currentView) || {};
   const params = new URLSearchParams({
     sort: currentSortField, order: currentSortOrder, limit: 500, offset: 0, ...extra,
   });
@@ -171,6 +238,8 @@ async function loadBooks() {
     window._lastBooks = books;
     document.getElementById('result-count').textContent =
       `${books.length} book${books.length !== 1 ? 's' : ''}`;
+    // Keep category selects in sync (needed after categories are created/deleted)
+    _rebuildBatchCategoryFilter();
     renderBooks(books);
     _updateSortHeaders();
   } catch { toast('Failed to load books', 'err'); }
@@ -206,7 +275,7 @@ async function loadSeriesView() {
         <div class="series-card" data-series-idx="${i}" onclick="filterBySeriesIdx(this)">
           <div class="series-name">${esc(s.series)}</div>
           <div class="series-meta">${s.count} vol. &nbsp;·&nbsp;
-            <span class="cat-badge cat-${s.category}">${s.category}</span></div>
+            <span class="cat-badge cat-${s.category}"${catBadgeStyle(s.category)}>${esc(s.category)}</span></div>
           <div class="series-bar">
             ${pctR ? `<div class="series-bar-r" style="flex:${pctR}"></div>` : ''}
             ${pctP ? `<div class="series-bar-p" style="flex:${pctP}"></div>` : ''}
@@ -298,7 +367,7 @@ function renderList(books) {
       </div>
       <div class="row-meta">
         <span class="type-badge type-${b.type}">${b.type.toUpperCase()}</span>
-        <span class="cat-badge cat-${b.category||'unknown'}">${b.category||'?'}</span>
+        <span class="cat-badge cat-${b.category||'unknown'}"${catBadgeStyle(b.category||'unknown')}>${esc(b.category||'?')}</span>
         <span class="status-badge ${b.status||'unread'}">${b.status||'unread'}</span>
       </div>
     </div>`;
@@ -466,6 +535,13 @@ function toggleLibSel(id) {
       document.getElementById('select-bar')?.classList.add('visible');
     }
   }
+  // Hide toolbar when last item is deselected
+  if (libSelection.size === 0 && selectMode) {
+    selectMode = false;
+    document.getElementById('vbtn-sel')?.classList.remove('active');
+    document.getElementById('library-page')?.classList.remove('sel-mode');
+    document.getElementById('select-bar')?.classList.remove('visible');
+  }
   // Update visual state without full re-render
   _updateCardCheck(id);
   _updateSelectBar();
@@ -592,6 +668,23 @@ async function libBatchEdit() {
   setTimeout(() => body?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
 }
 
+async function libBatchSetCategory(sel) {
+  const cat = sel.value;
+  if (!cat || !libSelection.size) { sel.value = ''; return; }
+  const ids = [...libSelection];
+  if (!confirm(`Set category to "${cat}" for ${ids.length} book(s)?`)) { sel.value = ''; return; }
+  try {
+    const resp = await fetch('/batch/metadata/edit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ book_ids: ids, edits: { category: cat } }),
+    });
+    await _drainSSE(resp);
+    toast(`Category set to "${cat}" for ${ids.length} books`, 'ok');
+    sel.value = '';
+    loadBooks();
+  } catch (e) { toast(`Failed: ${e.message}`, 'err'); sel.value = ''; }
+}
+
 async function libBatchDelete() {
   if (!libSelection.size) { toast('Select books first', 'err'); return; }
   if (!confirm(`Delete scraped metadata for ${libSelection.size} book(s)?\nManual entries will be kept.`)) return;
@@ -684,6 +777,8 @@ async function loadStats() {
 // ---------------------------------------------------------------------------
 
 let _scanAbortController = null;   // AbortController for the SSE fetch
+const _scanDetail = { added: [], skipped: [], errors: [], removed: [] };
+let _scanDetailTab = 'added';
 
 async function triggerScan() {
   const btn = document.querySelector('.scan-btn');
@@ -836,6 +931,10 @@ async function _readScanSSE(resp) {
           el.textContent = `−${payload.count} removed`;
           el.style.display = '';
           _scanLogLine(`− ${payload.count} file${payload.count > 1 ? 's' : ''} removed from library`, 'log-removed');
+          if (payload.paths?.length) {
+            payload.paths.forEach(p => _scanDetail.removed.push(p));
+            _scanDetailUpdate();
+          }
         }
 
       } else if (etype === 'done') {
@@ -860,6 +959,10 @@ async function _readScanSSE(resp) {
         _scanLogLine(`✓ Scan complete: ${parts.join(', ') || 'no changes'}`, 'log-info');
         errors.forEach(e => _scanLogLine(`  ✗ ${e}`, 'log-error'));
         toast(parts.length ? `Scan complete — ${parts.join(', ')}` : 'Scan complete — no changes', 'ok');
+        // Auto-switch detail tab to most interesting category
+        if (_scanDetail.errors.length)       { _scanDetailTab = 'errors';  switchScanDetailTab('errors');  }
+        else if (_scanDetail.added.length)   { _scanDetailTab = 'added';   switchScanDetailTab('added');   }
+        else if (_scanDetail.skipped.length) { _scanDetailTab = 'skipped'; switchScanDetailTab('skipped'); }
         loadBooks(); loadStats();
 
       } else if (etype === 'cancelled') {
@@ -916,8 +1019,22 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
   currentBook = null; selectedMetaId = null;
 }
+// Track where mousedown started to distinguish clicks from drags.
+// If the user pressed inside the modal and released outside (drag-select text,
+// drag a scrollbar, etc.), we must NOT close the modal.
+let _modalMouseDownOnOverlay = false;
+
+document.addEventListener('mousedown', e => {
+  const overlay = document.getElementById('modal-overlay');
+  if (!overlay?.classList.contains('open')) return;
+  _modalMouseDownOnOverlay = (e.target === overlay);
+});
+
 function closeModalOnBg(e) {
-  if (e.target === document.getElementById('modal-overlay')) closeModal();
+  // Only close if BOTH mousedown and mouseup/click landed on the bare overlay.
+  if (e.target === document.getElementById('modal-overlay') && _modalMouseDownOnOverlay) {
+    closeModal();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,36 +1154,60 @@ async function _renderInfoMeta(bookId) {
 
 function renderCatOpts(current) {
   document.getElementById('cat-opts').innerHTML =
-    ['manga','comics','book','unknown'].map(c =>
-      `<div class="cat-opt ${current===c?'sel-'+c:''}" onclick="selectCat('${c}')">${c}</div>`
-    ).join('');
+    allCategories.map(c => {
+      const isSel = current === c.name;
+      // Store the slug in data-cat so selectCat/saveFileClass never rely on
+      // displayed text — label and slug diverge for custom categories.
+      const style = (c.color && !c.is_builtin && isSel)
+        ? ` style="border-color:${c.color};color:${c.color}"`
+        : '';
+      return `<div class="cat-opt ${isSel?'sel-'+c.name:''}" data-cat="${c.name}"${style} `+
+             `onclick="selectCat('${c.name}')">${esc(c.label)}</div>`;
+    }).join('');
 }
-function selectCat(cat) {
+async function selectCat(cat) {
+  // Update visual state
   document.querySelectorAll('.cat-opt').forEach(el => {
-    const c = el.textContent.trim();
-    el.className = `cat-opt ${c===cat?'sel-'+c:''}`;
+    const slug = el.dataset.cat;
+    const isSel = slug === cat;
+    const def = allCategories.find(c => c.name === slug);
+    if (def && def.color && !def.is_builtin) {
+      el.style.borderColor = isSel ? def.color : '';
+      el.style.color       = isSel ? def.color : '';
+    }
+    el.className = `cat-opt ${isSel ? 'sel-' + slug : ''}`;
   });
+  // Save immediately — no separate "Save" button needed for a single-choice field
+  if (!currentBook) return;
+  try {
+    const updated = await api(`/books/${currentBook.id}`, {
+      method: 'PATCH', body: { category: cat },
+    });
+    currentBook = updated;
+    document.getElementById('modal-badges').innerHTML =
+      `<span class="type-badge type-${updated.type}">${updated.type.toUpperCase()}</span>` +
+      `<span class="cat-badge cat-${updated.category||'unknown'}"${catBadgeStyle(updated.category||'unknown')}>${esc(updated.category||'unknown')}</span>` +
+      `<span class="status-badge ${updated.status||'unread'}">${updated.status||'unread'}</span>` +
+      (updated.file_size ? `<span class="tag-pill">${fmtSize(updated.file_size)}</span>` : '');
+    toast('Category saved', 'ok');
+    loadBooks();
+  } catch (e) { toast(`Save failed: ${e.message}`, 'err'); }
 }
 
-// Save only the file classification fields (category + type)
+// Save the file format (type) — category is saved immediately on pill click via selectCat()
 async function saveFileClass() {
   if (!currentBook) return;
-  const sel  = document.querySelector('.cat-opt[class*="sel-"]');
   const type = document.getElementById('info-type').value;
-  const body = {};
-  if (sel)  body.category = sel.textContent.trim();
-  if (type) body.type     = type;
-  if (!Object.keys(body).length) return;
+  if (!type) return;
   try {
-    const updated = await api(`/books/${currentBook.id}`, { method: 'PATCH', body });
+    const updated = await api(`/books/${currentBook.id}`, { method: 'PATCH', body: { type } });
     currentBook = updated;
-    // Refresh badges in modal header
-    document.getElementById('modal-badges').innerHTML = `
-      <span class="type-badge type-${updated.type}">${updated.type.toUpperCase()}</span>
-      <span class="cat-badge cat-${updated.category||'unknown'}">${updated.category||'unknown'}</span>
-      <span class="status-badge ${updated.status||'unread'}">${updated.status||'unread'}</span>
-      ${updated.file_size ? `<span class="tag-pill">${fmtSize(updated.file_size)}</span>` : ''}`;
-    toast('Classification saved', 'ok');
+    document.getElementById('modal-badges').innerHTML =
+      `<span class="type-badge type-${updated.type}">${updated.type.toUpperCase()}</span>` +
+      `<span class="cat-badge cat-${updated.category||'unknown'}"${catBadgeStyle(updated.category||'unknown')}>${esc(updated.category||'unknown')}</span>` +
+      `<span class="status-badge ${updated.status||'unread'}">${updated.status||'unread'}</span>` +
+      (updated.file_size ? `<span class="tag-pill">${fmtSize(updated.file_size)}</span>` : '');
+    toast('Format saved', 'ok');
     loadBooks();
   } catch (e) { toast(`Save failed: ${e.message}`, 'err'); }
 }
@@ -1275,16 +1416,32 @@ function renderMeta(rows, activeSrc) {
     }
   }
   el.innerHTML = html;
-  _populateManualForm(manual || null);
+
+  // Pre-fill manual form: use existing manual row if present,
+  // otherwise seed from the best scraped result so the user can
+  // correct a single field without re-entering everything.
+  if (manual) {
+    _populateManualForm(manual);
+  } else {
+    const best = rows.find(r => r.is_pinned && !r.is_manual)
+      || rows.filter(r => !r.is_manual && r.score).sort((a,b) => b.score - a.score)[0]
+      || rows.find(r => !r.is_manual);
+    _populateManualForm(best || null, !!best);
+  }
 }
 
-function _populateManualForm(m) {
+function _populateManualForm(m, isSeeded) {
+  // isSeeded=true means we're pre-filling from a scraped row (no existing manual entry).
+  // Show a hint so the user knows the form isn't blank by accident.
+  const hint = document.getElementById('manual-seed-hint');
+
   if (!m) {
     ['title','series','volume','synopsis','authors','artists','genres','tags',
      'publisher','year','isbn','isbn13','score'].forEach(f => {
       const el = document.getElementById('manual-'+f);
       if (el) el.value = '';
     });
+    if (hint) hint.style.display = 'none';
     return;
   }
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
@@ -1301,6 +1458,16 @@ function _populateManualForm(m) {
   set('manual-isbn',    m.isbn);
   set('manual-isbn13',  m.isbn13);
   set('manual-score',   m.score);
+  // Show/hide the "pre-filled from scrape" hint
+  if (hint) {
+    if (isSeeded) {
+      const src = m.source ? m.source.replace(/_\d+$/, '') : 'scrape';
+      hint.textContent = `Fields pre-filled from ${src} result — edit what needs correcting, then save.`;
+      hint.style.display = 'block';
+    } else {
+      hint.style.display = 'none';
+    }
+  }
   // Open the details if populated
   if (m.title || m.synopsis || (m.authors||[]).length) {
     const d = document.getElementById('manual-details');
@@ -1604,7 +1771,19 @@ async function loadSettingsPage() {
     document.getElementById('cfg-std-webp').checked     = !!config.std_webp;
     document.getElementById('cfg-std-quality').value    = config.std_webp_quality ?? 85;
     document.getElementById('cfg-std-delete').checked   = !!config.std_delete_old;
-    document.getElementById('cfg-debug').checked        = !!config.debug;
+    const debugEl = document.getElementById('cfg-debug');
+    if (debugEl) {
+      debugEl.checked  = !!config.debug;
+      const debugLocked = locked.has('debug');
+      debugEl.disabled = debugLocked;
+      const debugLabel = debugEl.closest('.s-checkbox-row')?.querySelector('label');
+      if (debugLabel) {
+        debugLabel.title = debugLocked
+          ? 'Set via DEBUG environment variable — edit your .env to change'
+          : '';
+        debugLabel.style.opacity = debugLocked ? '0.6' : '';
+      }
+    }
 
     const storageEl = document.getElementById('cfg-meta-storage');
     if (storageEl) storageEl.value = config.metadata_storage || 'db';
@@ -1646,6 +1825,11 @@ async function loadSettingsPage() {
     _showKeyStatus('cfg-hardcover-key',
       config.hardcover_api_key === '••••••••',
       locked.has('hardcover_api_key'));
+
+    // Load categories card
+    loadCategoriesCard();
+    // Load scan folder filters
+    loadScanFolders();
 
     // Show global env notice if any keys are locked
     const envNotice = document.getElementById('env-locked-notice');
@@ -1713,6 +1897,361 @@ function setSaveStatus(msg, ok=false) {
   const el = document.getElementById('save-status');
   el.textContent = msg;
   el.className = 'save-status' + (ok ? ' saved' : '');
+}
+// ---------------------------------------------------------------------------
+// Settings — Categories management
+// ---------------------------------------------------------------------------
+
+let _catEditName = null; // null = creating, string = editing existing slug
+
+async function loadCategoriesCard() {
+  const list = document.getElementById('cat-list');
+  if (!list) return;
+  try {
+    allCategories = await api('/config/categories');
+    _rebuildSidebarCategoryNavItems();
+    _rebuildBatchCategoryFilter();
+    if (!allCategories.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:.8rem">No categories yet.</div>';
+      return;
+    }
+    list.innerHTML = allCategories.map(c => {
+      const swatch = c.color
+        ? `<span class="cat-def-swatch" style="background:${c.color}"></span>`
+        : `<span class="cat-def-swatch" style="background:var(--surface3)"></span>`;
+      const folders = c.folders?.length
+        ? `<span class="cat-def-folders" title="${esc(c.folders.join(', '))}">${esc(c.folders.join(', '))}</span>`
+        : `<span class="cat-def-folders" style="opacity:.4">no folder mapping</span>`;
+      const editBtn = c.is_builtin
+        ? `<span style="font-size:.7rem;color:var(--muted)">built-in</span>`
+        : `<button class="btn btn-ghost btn-sm" onclick="openCatForm('${c.name}')">Edit</button>`;
+      return `<div class="cat-def-row">
+        ${swatch}
+        <span class="cat-def-name">${esc(c.label)}</span>
+        <code style="font-size:.72rem;color:var(--muted);flex-shrink:0">${esc(c.name)}</code>
+        ${folders}
+        ${editBtn}
+      </div>`;
+    }).join('');
+  } catch { list.innerHTML = '<div style="color:var(--red);font-size:.8rem">Failed to load categories.</div>'; }
+}
+
+function openCatForm(editName) {
+  _catEditName = editName || null;
+  const form = document.getElementById('cat-form');
+  const title = document.getElementById('cat-form-title');
+  const delBtn = document.getElementById('cat-form-delete');
+  form.classList.add('open');
+  if (editName) {
+    const cat = allCategories.find(c => c.name === editName);
+    document.getElementById('cat-f-name').value    = cat?.name    || '';
+    document.getElementById('cat-f-label').value   = cat?.label   || '';
+    document.getElementById('cat-f-folders').value = (cat?.folders || []).join(', ');
+    document.getElementById('cat-f-color').value   = cat?.color   || '';
+    document.getElementById('cat-f-color-picker').value = cat?.color || '#7b61ff';
+    document.getElementById('cat-color-preview').style.background = cat?.color || '';
+    document.getElementById('cat-f-name').readOnly = true;
+    document.getElementById('cat-f-name').style.opacity = '0.6';
+    title.textContent = `Edit: ${cat?.label || editName}`;
+    delBtn.style.display = 'inline-flex';
+  } else {
+    document.getElementById('cat-f-name').value    = '';
+    document.getElementById('cat-f-label').value   = '';
+    document.getElementById('cat-f-folders').value = '';
+    document.getElementById('cat-f-color').value   = '';
+    document.getElementById('cat-f-color-picker').value = '#7b61ff';
+    document.getElementById('cat-color-preview').style.background = '';
+    document.getElementById('cat-f-name').readOnly = false;
+    document.getElementById('cat-f-name').style.opacity = '';
+    title.textContent = 'New category';
+    delBtn.style.display = 'none';
+  }
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeCatForm() {
+  document.getElementById('cat-form').classList.remove('open');
+  _catEditName = null;
+}
+
+async function saveCatForm() {
+  const name    = document.getElementById('cat-f-name').value.trim();
+  const label   = document.getElementById('cat-f-label').value.trim();
+  const folders = document.getElementById('cat-f-folders').value
+    .split(',').map(f => f.trim()).filter(Boolean);
+  const color   = document.getElementById('cat-f-color').value.trim();
+
+  if (!name || !label) { toast('Name and label are required', 'err'); return; }
+
+  const body = { name, label, folders, color };
+  try {
+    if (_catEditName) {
+      await api(`/config/categories/${_catEditName}`, { method: 'PATCH', body });
+      toast(`Category "${label}" updated`, 'ok');
+    } else {
+      await api('/config/categories', { method: 'POST', body });
+      toast(`Category "${label}" created`, 'ok');
+    }
+    closeCatForm();
+    loadCategoriesCard();
+  } catch (e) { toast(`Error: ${e.message}`, 'err'); }
+}
+
+async function deleteCatForm() {
+  if (!_catEditName) return;
+  const cat = allCategories.find(c => c.name === _catEditName);
+  if (!confirm(`Delete category "${cat?.label || _catEditName}"? Books using it keep their category slug until reassigned.`)) return;
+  try {
+    await api(`/config/categories/${_catEditName}`, { method: 'DELETE' });
+    toast('Category deleted', 'ok');
+    closeCatForm();
+    loadCategoriesCard();
+  } catch (e) { toast(`Error: ${e.message}`, 'err'); }
+}
+
+function _catSlugify(input) {
+  input.value = input.value.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-');
+}
+
+function _syncColorInput() {
+  const picker = document.getElementById('cat-f-color-picker');
+  const input  = document.getElementById('cat-f-color');
+  const preview = document.getElementById('cat-color-preview');
+  input.value = picker.value;
+  preview.style.background = picker.value;
+}
+
+function _syncColorPicker() {
+  const input  = document.getElementById('cat-f-color');
+  const picker = document.getElementById('cat-f-color-picker');
+  const preview = document.getElementById('cat-color-preview');
+  const val = input.value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+    picker.value = val;
+    preview.style.background = val;
+  } else {
+    preview.style.background = '';
+  }
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Settings — Scan folder filters (lazy tree, Finder-style)
+// ---------------------------------------------------------------------------
+
+let _scanMode      = 'all';
+let _scanInclude   = [];
+let _scanExclude   = [];
+let _scanEnvLocked = false;
+// Set of rel_paths that are currently expanded
+const _scanExpanded = new Set();
+
+async function loadScanFolders() {
+  const listEl = document.getElementById('scan-folder-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--muted);font-size:.8rem">Loading…</div>';
+  _scanExpanded.clear();
+  try {
+    const [data, config] = await Promise.all([
+      api('/config/scan-folders'),
+      api('/config'),
+    ]);
+
+    if (!data.library_ok) {
+      listEl.innerHTML = `<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);
+          border-radius:7px;padding:.65rem .85rem;font-size:.8rem;color:var(--amber);line-height:1.55">
+        <strong>Library not configured correctly</strong><br>
+        ${esc(data.library_error || 'Unknown error')}<br>
+        <span style="color:var(--muted)">→ Set the correct path in the</span>
+        <a href="#" onclick="document.getElementById('cfg-library-path')?.focus();return false"
+          style="color:var(--accent2)">Library section above</a>.
+      </div>`;
+      return;
+    }
+
+    _scanInclude = data.scan_include || [];
+    _scanExclude = data.scan_exclude || [];
+    _scanMode    = _scanInclude.length ? 'include'
+                 : _scanExclude.length ? 'exclude' : 'all';
+
+    const locked = new Set(config._env_locked || []);
+    _scanEnvLocked = locked.has('scan_include') || locked.has('scan_exclude');
+
+    document.getElementById('scan-filter-note').style.display =
+      _scanEnvLocked ? 'block' : 'none';
+
+    const ignoreEl = document.getElementById('scanignore-notice');
+    if (ignoreEl) {
+      ignoreEl.style.display = data.scanignore?.length ? 'block' : 'none';
+      if (data.scanignore?.length)
+        ignoreEl.textContent = `📄 .scanignore: ${data.scanignore.join(', ')} (always excluded)`;
+    }
+
+    _renderScanMode();
+    _renderScanTree(listEl, data.folders, 0);
+  } catch(e) {
+    listEl.innerHTML = `<div style="color:var(--red);font-size:.8rem">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+function _renderScanMode() {
+  ['all','include','exclude'].forEach(m =>
+    document.getElementById('scan-mode-' + m)?.classList.toggle('sel', _scanMode === m));
+  const hints = {
+    all:     'Every folder is scanned (default).',
+    include: 'Only checked folders are scanned — all others skipped.',
+    exclude: 'Checked folders are skipped — all others scanned.',
+  };
+  const hint = document.getElementById('scan-mode-hint');
+  if (hint) hint.textContent = hints[_scanMode] || '';
+}
+
+function setScanMode(mode) {
+  if (_scanEnvLocked) return;
+  _scanMode = mode;
+  if (mode === 'all') { _scanInclude = []; _scanExclude = []; }
+  _renderScanMode();
+  // Re-render visible rows in place to update checkbox states
+  document.querySelectorAll('.sfr').forEach(row => {
+    const rel  = row.dataset.rel;
+    const cb   = row.querySelector('.scan-folder-cb');
+    if (!cb) return;
+    cb.checked  = _isChecked(rel);
+    cb.disabled = _scanEnvLocked || _scanMode === 'all';
+    _updateRowBadge(row, rel);
+  });
+}
+
+function _isChecked(rel) {
+  if (_scanMode === 'include') return _scanInclude.includes(rel);
+  if (_scanMode === 'exclude') return _scanExclude.includes(rel);
+  return false;
+}
+
+function _statusForRel(rel) {
+  // Check scanignore via DOM (we don't store it in JS state separately)
+  if (_scanMode === 'all') return 'included';
+  if (_scanMode === 'include') {
+    const matched = _scanInclude.some(r => rel === r || rel.startsWith(r + '/') || r.startsWith(rel + '/'));
+    return matched ? 'included' : 'excluded';
+  }
+  // exclude mode
+  const excluded = _scanExclude.some(r => rel === r || rel.startsWith(r + '/'));
+  return excluded ? 'excluded' : 'included';
+}
+
+function _renderScanTree(container, folders, depth) {
+  if (!folders.length) {
+    container.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.5rem 0">No folders found.</div>';
+    return;
+  }
+  container.innerHTML = folders.map(f => _folderRowHTML(f, depth)).join('');
+}
+
+function _folderRowHTML(f, depth) {
+  const rel      = f.rel_path;
+  const checked  = _isChecked(rel);
+  const status   = f.source === 'scanignore' ? 'ignored' : _statusForRel(rel);
+  const badgeCls = status === 'included' ? 'sfb-included'
+                 : status === 'ignored'  ? 'sfb-ignored' : 'sfb-excluded';
+  const count    = f.file_count != null ? `${f.file_count}` : '';
+  const disabled = _scanEnvLocked || _scanMode === 'all';
+  const expanded = _scanExpanded.has(rel);
+  const safeId   = rel.replace(/[^a-zA-Z0-9]/g, '_');
+
+  const indent   = depth * 18;  // px indent per level
+  const arrow    = f.has_children
+    ? `<span class="sfr-arrow ${expanded ? 'open' : ''}" onclick="toggleScanDir(event,'${rel}',${depth})" title="Expand">▶</span>`
+    : `<span class="sfr-arrow-ph"></span>`;
+
+  return `<div class="sfr" data-rel="${esc(rel)}" data-depth="${depth}" id="sfr-${safeId}">
+    <div class="scan-folder-row" style="padding-left:${indent}px">
+      ${arrow}
+      <input type="checkbox" class="scan-folder-cb"
+        id="sfcb-${safeId}" value="${esc(rel)}"
+        ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}
+        onchange="onScanFolderCheck(this)"
+        style="accent-color:var(--accent);flex-shrink:0;width:13px;height:13px;cursor:pointer">
+      <label for="sfcb-${safeId}" class="scan-folder-name"
+        style="cursor:${disabled ? 'default' : 'pointer'}">${esc(f.name)}</label>
+      ${count ? `<span class="scan-folder-count">${count}</span>` : ''}
+      <span class="scan-folder-badge ${badgeCls}">${status}</span>
+    </div>
+    <div class="sfr-children" id="sfrc-${safeId}" style="display:${expanded ? 'block' : 'none'}"></div>
+  </div>`;
+}
+
+async function toggleScanDir(evt, rel, depth) {
+  evt.stopPropagation();
+  const safeId    = rel.replace(/[^a-zA-Z0-9]/g, '_');
+  const arrowEl   = document.querySelector(`#sfr-${safeId} .sfr-arrow`);
+  const childrenEl = document.getElementById(`sfrc-${safeId}`);
+  if (!childrenEl) return;
+
+  if (_scanExpanded.has(rel)) {
+    // Collapse
+    _scanExpanded.delete(rel);
+    childrenEl.style.display = 'none';
+    if (arrowEl) arrowEl.classList.remove('open');
+  } else {
+    // Expand — load children if not yet loaded
+    _scanExpanded.add(rel);
+    if (arrowEl) arrowEl.classList.add('open');
+    childrenEl.style.display = 'block';
+    if (!childrenEl.dataset.loaded) {
+      childrenEl.innerHTML = '<div style="padding:.25rem 0 .25rem ' + ((depth+1)*18) + 'px;font-size:.78rem;color:var(--muted)">Loading…</div>';
+      try {
+        const data = await api('/config/scan-folders?subpath=' + encodeURIComponent(rel));
+        childrenEl.dataset.loaded = '1';
+        if (!data.folders?.length) {
+          childrenEl.innerHTML = '';
+        } else {
+          childrenEl.innerHTML = data.folders.map(f => _folderRowHTML(f, depth + 1)).join('');
+        }
+      } catch {
+        childrenEl.innerHTML = '<div style="color:var(--red);font-size:.75rem;padding:.2rem 0">Error loading</div>';
+      }
+    }
+  }
+}
+
+function onScanFolderCheck(cb) {
+  const rel = cb.value;
+  if (_scanMode === 'include') {
+    if (cb.checked) { if (!_scanInclude.includes(rel)) _scanInclude.push(rel); }
+    else _scanInclude = _scanInclude.filter(r => r !== rel);
+  } else if (_scanMode === 'exclude') {
+    if (cb.checked) { if (!_scanExclude.includes(rel)) _scanExclude.push(rel); }
+    else _scanExclude = _scanExclude.filter(r => r !== rel);
+  }
+  // Update badge on this row and all visible descendants
+  document.querySelectorAll('.sfr').forEach(row => {
+    const r = row.dataset.rel;
+    if (r === rel || r.startsWith(rel + '/') || rel.startsWith(r + '/')) {
+      _updateRowBadge(row, r);
+    }
+  });
+}
+
+function _updateRowBadge(row, rel) {
+  const badge = row.querySelector('.scan-folder-badge');
+  if (!badge) return;
+  // Source might be scanignore — preserve it from the original badge class
+  if (badge.classList.contains('sfb-ignored')) return;
+  const status = _statusForRel(rel);
+  badge.className = 'scan-folder-badge ' + (status === 'included' ? 'sfb-included' : 'sfb-excluded');
+  badge.textContent = status;
+}
+
+async function saveScanFolders() {
+  if (_scanEnvLocked) { toast('Scan filters locked by environment variable', 'err'); return; }
+  try {
+    await api('/config', { method: 'PATCH',
+      body: { scan_include: _scanInclude, scan_exclude: _scanExclude } });
+    toast('Scan filters saved', 'ok');
+    loadScanFolders();
+  } catch(e) { toast(`Save failed: ${e.message}`, 'err'); }
 }
 
 // Path verify & folder browser
@@ -2121,14 +2660,16 @@ function addEditField() {
   const container = document.getElementById('edit-fields-list');
   const ALL_FIELDS = [
     ['series',    'Series',     'text'],
+    ['title',     'Title',      'text'],
+    ['volume',    'Volume',     'number'],
+    ['category',  'Category',   'select:' + allCategories.map(c=>c.name).join(',')],
     ['language',  'Language',   'text'],
     ['publisher', 'Publisher',  'text'],
     ['year',      'Year',       'number'],
-    ['category',  'Category',   'select:manga,comics,book,unknown'],
+    ['authors',   'Authors',    'text'],
+    ['artists',   'Artists',    'text'],
     ['country',   'Country',    'text'],
     ['pub_status','Pub. status','text'],
-    ['title',     'Title',      'text'],
-    ['volume',    'Volume',     'number'],
     ['score',     'Score',      'number'],
   ];
 
@@ -2160,34 +2701,48 @@ function _updateEditFieldInput(rowId, field) {
     year:     'number',
     volume:   'number',
     score:    'number',
-    category: 'select:manga,comics,book,unknown',
+    category: 'select:' + allCategories.map(c=>c.name).join(','),
+  };
+  const placeholderMap = {
+    authors:   'Author 1, Author 2',
+    artists:   'Artist 1, Artist 2',
+    genres:    'Action, Adventure',
+    tags:      'tag1, tag2',
+    language:  'fr',
+    country:   'JP',
+    pub_status:'Ongoing',
   };
   const t = typeMap[field] || 'text';
 
   if (t.startsWith('select:')) {
     // Replace input with a <select>
-    const opts = t.slice(7).split(',').map(v => `<option value="${v}">${v}</option>`).join('');
+    const opts = t.slice(7).split(',').map(v => `<option value="${v}">${esc(v)}</option>`).join('');
     const sel  = document.createElement('select');
     sel.className = 'edit-value';
     sel.innerHTML = opts;
     current.replaceWith(sel);
   } else {
     // Ensure it's an input (not a leftover select from a previous category choice)
+    const ph = placeholderMap[field] || 'Value…';
     if (current.tagName === 'SELECT') {
       const inp = document.createElement('input');
       inp.className   = 'edit-value';
       inp.type        = t;
-      inp.placeholder = 'Value…';
+      inp.placeholder = ph;
       current.replaceWith(inp);
     } else {
       current.type        = t;
-      current.placeholder = 'Value…';
+      current.placeholder = ph;
       current.value       = '';
     }
   }
 }
 
 function _collectEditFields() {
+  // Fields that the metadata API expects as arrays (comma-separated input → list)
+  const ARRAY_FIELDS = new Set(['authors', 'artists', 'genres', 'tags']);
+  const NUM_FIELDS   = new Set(['year', 'volume', 'score']);
+
   const rows  = document.querySelectorAll('.edit-field-row');
   const edits = {};
   rows.forEach(row => {
@@ -2197,7 +2752,10 @@ function _collectEditFields() {
     const key = keyEl.value;
     const raw = valEl.value.trim();
     if (!raw) return;
-    edits[key] = ['year', 'volume', 'score'].includes(key) ? Number(raw) : raw;
+    if (NUM_FIELDS.has(key))   edits[key] = Number(raw);
+    else if (ARRAY_FIELDS.has(key))
+      edits[key] = raw.split(',').map(s => s.trim()).filter(Boolean);
+    else                        edits[key] = raw;
   });
   return edits;
 }

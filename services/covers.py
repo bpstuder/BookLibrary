@@ -7,8 +7,11 @@ Outputs a JPEG thumbnail saved to data/covers/<book_id>.jpg.
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from pathlib import Path
+
+log = logging.getLogger("manga.covers")
 
 COVERS_DIR = Path(__file__).parent.parent / "data" / "covers"
 COVER_SIZE = (400, 600)   # max thumbnail dimensions
@@ -26,15 +29,23 @@ def extract_cover(book_path: Path, book_id: int) -> Path | None:
     """
     ext = book_path.suffix.lower()
     try:
+        result: Path | None = None
         if ext in (".cbz", ".cbr"):
-            return _cover_from_cbz(book_path, book_id)
+            result = _cover_from_cbz(book_path, book_id)
         elif ext == ".epub":
-            return _cover_from_epub(book_path, book_id)
+            result = _cover_from_epub(book_path, book_id)
         elif ext == ".pdf":
-            return _cover_from_pdf(book_path, book_id)
-        # MOBI / AZW3 — cover extraction requires heavy deps, skip for now
-        return None
-    except Exception:
+            result = _cover_from_pdf(book_path, book_id)
+        else:
+            log.debug("covers: %s — format not supported for cover extraction", book_path.name)
+            return None
+        if result:
+            log.debug("covers: %-40s → %s", book_path.name, result.name)
+        else:
+            log.debug("covers: %-40s → no image found", book_path.name)
+        return result
+    except Exception as e:
+        log.debug("covers: %-40s → error: %s", book_path.name, e)
         return None
 
 
@@ -66,10 +77,13 @@ def _cover_from_cbz(path: Path, book_id: int) -> Path | None:
                 key=_key,
             )
             if not images:
+                log.debug("covers: CBZ %s — no images inside archive", path.name)
                 return None
+            log.debug("covers: CBZ %s — %d images, using %s", path.name, len(images), images[0])
             data = zf.read(images[0])
             return _save_thumbnail(data, book_id)
     except zipfile.BadZipFile:
+        log.debug("covers: CBZ %s — bad zip file", path.name)
         return None
 
 
@@ -121,9 +135,11 @@ def _cover_from_epub(path: Path, book_id: int) -> Path | None:
                 [n for n in names if Path(n).suffix.lower() in image_exts]
             )
             if images:
+                log.debug("covers: EPUB %s — OPF cover not found, fallback to %s", path.name, images[0])
                 return _save_thumbnail(zf.read(images[0]), book_id)
-    except Exception:
-        pass
+            log.debug("covers: EPUB %s — no images found at all", path.name)
+    except Exception as e:
+        log.debug("covers: EPUB %s — parse error: %s", path.name, e)
     return None
 
 
@@ -137,11 +153,15 @@ def _cover_from_pdf(path: Path, book_id: int) -> Path | None:
 
         doc = fitz.open(str(path))
         if not doc.page_count:
+            log.debug("covers: PDF %s — empty document (0 pages)", path.name)
             return None
         page = doc.load_page(0)
         pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        log.debug("covers: PDF %s — page 0 rendered (%dx%d)", path.name, pix.width, pix.height)
         return _save_thumbnail(pix.tobytes("jpeg"), book_id)
     except ImportError:
+        log.debug("covers: PDF %s — pymupdf not installed, skipping", path.name)
         return None
-    except Exception:
+    except Exception as e:
+        log.debug("covers: PDF %s — render error: %s", path.name, e)
         return None

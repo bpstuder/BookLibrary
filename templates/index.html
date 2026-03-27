@@ -146,6 +146,53 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 .cat-comics { background:rgba(59,130,246,.15); color:var(--blue); }
 .cat-book   { background:rgba(34,197,94,.15); color:var(--green); }
 .cat-unknown{ background:rgba(122,122,144,.12); color:var(--muted); }
+/* Scan folder filters */
+.scan-folder-list { display:flex; flex-direction:column; gap:0; margin-top:.25rem; }
+.sfr { display:flex; flex-direction:column; }
+.sfr-children { }
+.scan-folder-row { display:flex; align-items:center; gap:.55rem; padding:.32rem .1rem;
+  border-bottom:1px solid rgba(46,46,58,.28); font-size:.82rem; }
+.scan-folder-row:last-child { border-bottom:none; }
+/* Finder-style expand arrow */
+.sfr-arrow { width:16px; height:16px; flex-shrink:0; display:flex; align-items:center;
+  justify-content:center; cursor:pointer; font-size:.6rem; color:var(--muted);
+  transition:transform .15s; border-radius:3px; user-select:none; }
+.sfr-arrow:hover { color:var(--text); background:rgba(123,97,255,.12); }
+.sfr-arrow.open { transform:rotate(90deg); color:var(--accent2); }
+.sfr-arrow-ph { width:16px; flex-shrink:0; }
+.scan-folder-name { flex:1; font-weight:500; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.scan-folder-count { font-size:.7rem; color:var(--muted); flex-shrink:0; }
+.scan-folder-badge { font-size:.65rem; font-weight:600; padding:.08rem .38rem;
+  border-radius:20px; flex-shrink:0; }
+.sfb-included { background:rgba(34,197,94,.12); color:var(--green); }
+.sfb-excluded { background:rgba(239,68,68,.12); color:var(--red); }
+.sfb-ignored  { background:rgba(122,122,144,.12); color:var(--muted); }
+.scan-mode-row { display:flex; gap:.5rem; margin-bottom:.75rem; }
+.scan-mode-opt { padding:.32rem .75rem; border-radius:20px;
+  border:1.5px solid var(--border); cursor:pointer; font-size:.8rem;
+  font-weight:600; transition:all .12s; }
+.scan-mode-opt:hover { border-color:var(--accent); }
+.scan-mode-opt.sel { border-color:var(--accent2); color:var(--accent2);
+  background:rgba(123,97,255,.08); }
+
+/* Custom category management */
+.cat-def-row { display:flex; align-items:center; gap:.5rem; padding:.45rem .1rem;
+  border-bottom:1px solid rgba(46,46,58,.4); font-size:.83rem; }
+.cat-def-row:last-child { border-bottom:none; }
+.cat-def-swatch { width:16px; height:16px; border-radius:4px; flex-shrink:0; border:1px solid rgba(255,255,255,.12); }
+.cat-def-name  { font-weight:600; flex:1; min-width:0; }
+.cat-def-label { color:var(--muted); font-size:.75rem; flex:1; }
+.cat-def-folders { color:var(--muted); font-size:.72rem; max-width:160px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cat-form { background:var(--surface2); border-radius:8px; padding:.85rem 1rem;
+  margin-top:.65rem; display:none; flex-direction:column; gap:.6rem; }
+.cat-form.open { display:flex; }
+.cat-form-row { display:flex; gap:.6rem; align-items:flex-start; flex-wrap:wrap; }
+.cat-form-row > * { flex:1; min-width:110px; }
+.cat-color-row { display:flex; align-items:center; gap:.6rem; }
+.cat-color-preview { width:28px; height:28px; border-radius:6px; flex-shrink:0;
+  border:1px solid rgba(255,255,255,.15); transition:background .15s; }
 .status-badge { padding:.12rem .45rem; border-radius:20px; font-size:.68rem; font-weight:600; }
 .status-badge.unread  { background:rgba(122,122,144,.12); color:var(--muted); }
 .status-badge.reading { background:rgba(245,158,11,.15); color:var(--amber); }
@@ -464,6 +511,20 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
 .scan-log-wrap .log-removed { color:var(--amber); }
 .scan-log-wrap .log-error   { color:var(--red); }
 .scan-log-wrap .log-info    { color:var(--muted); }
+/* Scan details panel */
+#scan-details { border-top:1px solid var(--border); display:none; }
+#scan-details.open { display:block; }
+.scan-detail-tabs { display:flex; border-bottom:1px solid var(--border); }
+.scan-detail-tab { padding:.35rem .85rem; font-size:.75rem; cursor:pointer;
+  color:var(--muted); border-bottom:2px solid transparent; transition:all .12s; flex:1; text-align:center; }
+.scan-detail-tab.active { color:var(--accent2); border-bottom-color:var(--accent); }
+.scan-detail-body { max-height:200px; overflow-y:auto; padding:.35rem .85rem;
+  font-family:monospace; font-size:.71rem; line-height:1.6; }
+.scan-detail-body .di { color:var(--green); }
+.scan-detail-body .ds { color:var(--muted); }
+.scan-detail-body .de { color:var(--red); }
+.scan-detail-body .dr { color:var(--amber); }
+.scan-detail-empty { color:var(--muted); font-style:italic; font-size:.75rem; padding:.5rem 0; }
 /* footer */
 .scan-popup-footer { padding:.45rem .85rem; border-top:1px solid var(--border);
   display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
@@ -478,9 +539,11 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
   <div class="nav-section">Browse</div>
   <div class="nav-item active" data-view="all"     onclick="setView('all')">    <span class="nav-icon">🏠</span> All books</div>
   <div class="nav-item"        data-view="series"  onclick="setView('series')"> <span class="nav-icon">📚</span> By series</div>
-  <div class="nav-item"        data-view="manga"   onclick="setView('manga')">  <span class="nav-icon">📖</span> Manga</div>
-  <div class="nav-item"        data-view="comics"  onclick="setView('comics')"> <span class="nav-icon">💥</span> Comics</div>
-  <div class="nav-item"        data-view="books"   onclick="setView('books')">  <span class="nav-icon">📕</span> Books</div>
+  <div id="sidebar-cat-items">
+    <div class="nav-item" data-view="manga"  onclick="setView('manga')"> <span class="nav-icon">📖</span> Manga</div>
+    <div class="nav-item" data-view="comics" onclick="setView('comics')"><span class="nav-icon">💥</span> Comics</div>
+    <div class="nav-item" data-view="books"  onclick="setView('books')"> <span class="nav-icon">📕</span> Books</div>
+  </div>
   <div class="nav-section">Reading</div>
   <div class="nav-item"        data-view="reading" onclick="setView('reading')"><span class="nav-icon">⏳</span> In progress</div>
   <div class="nav-item"        data-view="unread"  onclick="setView('unread')"> <span class="nav-icon">🔖</span> To read</div>
@@ -528,6 +591,13 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
       <button class="btn btn-ghost btn-sm" onclick="libSelectAll()">All</button>
       <button class="btn btn-ghost btn-sm" onclick="libSelectNone()">None</button>
       <button class="btn btn-ghost btn-sm" onclick="libInvertSel()">Invert</button>
+      <div style="width:1px;height:20px;background:var(--border)"></div>
+      <select id="sel-bar-cat" onchange="libBatchSetCategory(this)"
+        style="padding:.28rem .55rem;background:var(--surface2);border:1px solid var(--border);
+               border-radius:6px;color:var(--text);font-size:.78rem;cursor:pointer"
+        title="Set category for selected books">
+        <option value="">🗂 Category…</option>
+      </select>
       <div style="width:1px;height:20px;background:var(--border)"></div>
       <button class="btn btn-primary btn-sm" onclick="libBatchScrape()">🔍 Scrape</button>
       <button class="btn btn-success btn-sm" onclick="libBatchApply()">✓ Apply meta</button>
@@ -583,6 +653,52 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
               <input type="checkbox" id="cfg-scan-startup">
               <label for="cfg-scan-startup">Auto-scan when server starts</label>
             </div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card" id="scan-filters-card">
+        <div class="settings-card-header"><span>🔍</span><div>
+          <div class="settings-card-title">Scan filters</div>
+          <div class="settings-card-desc">Choose which top-level folders to include or exclude from scans</div>
+        </div></div>
+        <div class="settings-card-body">
+
+          <!-- Mode selector -->
+          <div class="field-row">
+            <div class="field-label"><strong>Filter mode</strong>
+              <small>How the folder list is interpreted</small></div>
+            <div class="field-control">
+              <div class="scan-mode-row">
+                <div class="scan-mode-opt" id="scan-mode-all"  onclick="setScanMode('all')">Scan all</div>
+                <div class="scan-mode-opt" id="scan-mode-include" onclick="setScanMode('include')">Whitelist</div>
+                <div class="scan-mode-opt" id="scan-mode-exclude" onclick="setScanMode('exclude')">Blacklist</div>
+              </div>
+              <div id="scan-mode-hint" style="font-size:.75rem;color:var(--muted);margin-top:.25rem"></div>
+            </div>
+          </div>
+
+          <!-- Folder list -->
+          <div class="field-row">
+            <div class="field-label"><strong>Folders</strong></div>
+            <div class="field-control">
+              <div id="scan-folder-list" class="scan-folder-list">
+                <div style="color:var(--muted);font-size:.8rem">Loading…</div>
+              </div>
+              <div style="margin-top:.5rem;display:flex;gap:.5rem;flex-wrap:wrap">
+                <button class="btn btn-ghost btn-sm" onclick="loadScanFolders()">↺ Refresh</button>
+                <button class="btn btn-primary btn-sm" onclick="saveScanFolders()">💾 Save filter</button>
+              </div>
+              <div id="scan-filter-note" style="font-size:.72rem;color:var(--muted);margin-top:.4rem;display:none">
+                🔒 Overridden by environment variable — edit your .env to change.
+              </div>
+            </div>
+          </div>
+
+          <!-- .scanignore notice -->
+          <div id="scanignore-notice" style="display:none;background:rgba(122,122,144,.08);
+            border:1px solid var(--border);border-radius:7px;padding:.45rem .75rem;
+            font-size:.75rem;color:var(--muted)">
           </div>
         </div>
       </div>
@@ -716,6 +832,55 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
         </div>
       </div>
 
+      <div class="settings-card" id="settings-categories-card">
+        <div class="settings-card-header"><span>🗂</span><div>
+          <div class="settings-card-title">Categories</div>
+          <div class="settings-card-desc">Built-in categories are fixed. Add custom ones to organise your library your way.</div>
+        </div></div>
+        <div class="settings-card-body" id="categories-card-body">
+          <div id="cat-list">
+            <div style="color:var(--muted);font-size:.8rem">Loading…</div>
+          </div>
+          <div style="margin-top:.5rem">
+            <button class="btn btn-ghost btn-sm" onclick="openCatForm()">+ New category</button>
+          </div>
+          <!-- Create / Edit form -->
+          <div class="cat-form" id="cat-form">
+            <div style="font-size:.78rem;font-weight:700;color:var(--accent2)" id="cat-form-title">New category</div>
+            <div class="cat-form-row">
+              <div class="field-group" style="flex:1;min-width:100px">
+                <label>Slug <small style="color:var(--muted)">(a-z, 0-9, hyphens)</small></label>
+                <input class="s-input" id="cat-f-name" placeholder="light-novel" oninput="_catSlugify(this)">
+              </div>
+              <div class="field-group" style="flex:1;min-width:100px">
+                <label>Display label</label>
+                <input class="s-input" id="cat-f-label" placeholder="Light novels">
+              </div>
+            </div>
+            <div class="field-group">
+              <label>Auto-assign folders <small style="color:var(--muted)">(comma-separated 1st-level folder names)</small></label>
+              <input class="s-input" id="cat-f-folders" placeholder="LN, Light Novels, Novelas">
+            </div>
+            <div class="field-group">
+              <label>Badge color <small style="color:var(--muted)">(optional hex)</small></label>
+              <div class="cat-color-row">
+                <input type="color" id="cat-f-color-picker" value="#7b61ff"
+                  oninput="_syncColorInput()" style="width:36px;height:28px;padding:1px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer">
+                <input class="s-input mono" id="cat-f-color" placeholder="#7b61ff" style="width:100px;flex:0 0 auto"
+                  oninput="_syncColorPicker()">
+                <div class="cat-color-preview" id="cat-color-preview"></div>
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('cat-f-color').value='';document.getElementById('cat-color-preview').style.background='';" style="white-space:nowrap">Clear</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="saveCatForm()">💾 Save</button>
+              <button class="btn btn-ghost btn-sm" onclick="closeCatForm()">Cancel</button>
+              <button class="btn btn-danger btn-sm" id="cat-form-delete" onclick="deleteCatForm()" style="display:none;margin-left:auto">🗑 Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-card">
         <div class="settings-card-header"><span>🐛</span><div>
           <div class="settings-card-title">Debug</div>
@@ -766,6 +931,7 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
             <option value="comics">Comics</option>
             <option value="book">Books</option>
           </select>
+          <!-- populated dynamically by _rebuildBatchCategoryFilter() after boot -->
           <select class="s-select" id="batch-filter-meta" style="width:auto" onchange="loadBatchBooks()">
             <option value="">All</option>
             <option value="no_meta">No metadata</option>
@@ -927,8 +1093,29 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
         color:var(--amber);display:none"></span>
     </div>
     <div class="scan-log-wrap" id="scan-log-wrap"></div>
+    <!-- Expandable details panel -->
+    <div id="scan-details">
+      <div class="scan-detail-tabs">
+        <div class="scan-detail-tab active" id="sdt-added" onclick="switchScanDetailTab('added')">
+          Added <span id="sdt-added-cnt" style="color:var(--green)"></span>
+        </div>
+        <div class="scan-detail-tab" id="sdt-skipped" onclick="switchScanDetailTab('skipped')">
+          Skipped <span id="sdt-skipped-cnt" style="color:var(--muted)"></span>
+        </div>
+        <div class="scan-detail-tab" id="sdt-errors" onclick="switchScanDetailTab('errors')">
+          Errors <span id="sdt-errors-cnt" style="color:var(--red)"></span>
+        </div>
+        <div class="scan-detail-tab" id="sdt-removed" onclick="switchScanDetailTab('removed')">
+          Removed <span id="sdt-removed-cnt" style="color:var(--amber)"></span>
+        </div>
+      </div>
+      <div class="scan-detail-body" id="scan-detail-body"></div>
+    </div>
     <div class="scan-popup-footer">
       <span class="scan-status-text" id="scan-status-text"></span>
+      <button class="btn btn-ghost btn-sm" id="btn-scan-details"
+              onclick="toggleScanDetails()"
+              style="display:none;flex-shrink:0;font-size:.72rem">Details ▼</button>
       <button class="btn btn-danger btn-sm" id="btn-cancel-scan"
               onclick="cancelScan()" style="display:none;flex-shrink:0">✕ Cancel</button>
     </div>
@@ -1068,6 +1255,9 @@ body { font-family: system-ui,-apple-system,sans-serif; background:var(--bg);
         <summary style="cursor:pointer;font-size:.82rem;color:var(--accent2);padding:.25rem 0;
           font-weight:600">✏️ Manual metadata</summary>
         <div style="margin-top:.65rem;display:flex;flex-direction:column;gap:.5rem">
+          <div id="manual-seed-hint" style="display:none;background:rgba(123,97,255,.08);
+            border:1px solid rgba(123,97,255,.25);border-radius:7px;padding:.4rem .65rem;
+            font-size:.75rem;color:var(--accent2)"></div>
           <div class="field-group"><label>Title</label>
             <input type="text" id="manual-title" placeholder="Title">
           </div>

@@ -78,20 +78,54 @@ def _normalise_folder_name(name: str) -> str:
     return re.sub(r"[\s_\-]+", " ", ascii_name).strip().lower()
 
 
+def _build_category_rules() -> list[tuple[str, set[str]]]:
+    """
+    Merge built-in folder-category rules with custom categories from config.
+
+    Priority: custom categories FIRST, then built-ins as fallback.
+
+    This allows a user to explicitly override a built-in keyword —
+    e.g. creating a "BD" category with folder "BD" takes precedence over
+    the built-in "comics" rule that also matches "bd".
+
+    Built-ins still apply to any folder not claimed by a custom category.
+    """
+    import db.config as cfg
+
+    rules: list[tuple[str, set[str]]] = []
+
+    # 1. Custom categories first — explicit user intent wins
+    for cat in cfg.get("custom_categories", []):
+        name    = cat.get("name", "").strip()
+        folders = [f.strip() for f in cat.get("folders", []) if f.strip()]
+        if name and folders:
+            rules.append((name, {_normalise_folder_name(f) for f in folders}))
+
+    # 2. Built-ins as fallback
+    rules.extend(_FOLDER_CATEGORY_RULES)
+
+    return rules
+
+
 def _category_from_path(path: Path, library_root: Path) -> Optional[str]:
     """
     Walk path segments between library_root and the file.
     Return the first category matched, or None if no keyword matches.
+
+    Rules are built-ins first, then custom categories from config.
+    Custom categories use exact (normalised) folder-name matching.
     """
     try:
         rel = path.relative_to(library_root)
     except ValueError:
         return None
 
+    rules = _build_category_rules()
+
     # Test every intermediate folder (not the filename itself)
     for part in rel.parts[:-1]:
         norm = _normalise_folder_name(part)
-        for category, keywords in _FOLDER_CATEGORY_RULES:
+        for category, keywords in rules:
             if norm in keywords:
                 return category
     return None
@@ -126,12 +160,14 @@ def _series_from_path(
     if not parts:
         return filename_series  # file is at library root — no folder hint
 
-    # Find the category folder depth (if any)
+    # Find the category folder depth (if any).
+    # Use _build_category_rules() so custom categories are included.
     cat_depth: Optional[int] = None
     if category_folder is not None:
+        all_rules = _build_category_rules()
         for i, part in enumerate(parts):
             norm = _normalise_folder_name(part)
-            for _, keywords in _FOLDER_CATEGORY_RULES:
+            for _, keywords in all_rules:
                 if norm in keywords:
                     cat_depth = i
                     break
@@ -166,20 +202,133 @@ def _series_from_path(
 
 
 # ---------------------------------------------------------------------------
+# Scan folder filtering (1st-level subdirectories only)
+# ---------------------------------------------------------------------------
+
+def _load_scanignore(library_path: Path) -> set[str]:
+    """
+    Read <library_path>/.scanignore and return a set of folder names to exclude.
+
+    Syntax:
+      - One folder name per line (just the name, not a full path).
+      - Lines starting with # are comments and are ignored.
+      - Blank lines are ignored.
+      - Folder names are compared case-sensitively (filesystem behaviour).
+
+    Example .scanignore:
+      # work in progress — don't index yet
+      Downloads
+      Inbox
+      _unsorted
+    """
+    scanignore = library_path / ".scanignore"
+    if not scanignore.exists():
+        return set()
+    excluded: set[str] = set()
+    try:
+        for raw in scanignore.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                excluded.add(line)
+    except Exception:
+        pass
+    return excluded
+
+
+def _is_folder_allowed(
+    folder_name: str,
+    include: list[str],
+    exclude: set[str],
+) -> bool:
+    """
+    Decide whether a 1st-level subdirectory should be scanned.
+
+    Rules (applied in order):
+      1. If folder_name is in exclude  → False  (exclude always wins)
+      2. If include is non-empty and folder_name is NOT in include  → False
+      3. Otherwise  → True
+
+    Args:
+      folder_name: bare name of the subdirectory (e.g. "Manga").
+      include:     whitelist from config scan_include ([] = scan everything).
+      exclude:     combined blacklist from config scan_exclude + .scanignore.
+    """
+    if folder_name in exclude:
+        return False
+    if include and folder_name not in include:
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # File discovery (shared)
 # ---------------------------------------------------------------------------
 
 def _discover_files(library_path: Path) -> dict[str, Path]:
-    """Walk library_path and return {path_str: Path} for all supported files."""
+    """
+    Walk library_path and return {path_str: Path} for all supported files.
+
+    1st-level subdirectories are filtered by:
+      - .scanignore file at library_path root
+      - scan_exclude config key  (blacklist, wins over whitelist)
+      - scan_include config key  (whitelist, empty = include everything)
+
+    Files sitting directly at library_path root (no subdirectory) are always
+    included — the filter only applies to named top-level folders.
+    """
+    import logging
+    import db.config as cfg
+
+    log = logging.getLogger("manga.scan")
+
+    include: list[str] = cfg.get("scan_include", [])
+    exclude: set[str]  = set(cfg.get("scan_exclude", []))
+    scanignore = _load_scanignore(library_path)
+    exclude |= scanignore
+
+    if include:
+        log.debug("Scan filter — whitelist: %s", include)
+    if exclude:
+        log.debug(
+            "Scan filter — blacklist: %s%s",
+            sorted(exclude - scanignore),
+            f" + .scanignore: {sorted(scanignore)}" if scanignore else "",
+        )
+
     disk_files: dict[str, Path] = {}
+    counts_by_folder: dict[str, int] = {}
+
     for root, dirs, files in os.walk(library_path):
-        dirs[:] = [d for d in dirs if d != "__MACOSX"]
+        root_path = Path(root)
+
+        # Apply folder filter only at the 1st level below library_path.
+        if root_path == library_path:
+            all_dirs = [d for d in dirs if d != "__MACOSX"]
+            allowed  = [d for d in all_dirs if _is_folder_allowed(d, include, exclude)]
+            skipped  = [d for d in all_dirs if d not in allowed]
+            if skipped:
+                log.debug("Scan: skipping top-level folders: %s", skipped)
+            dirs[:] = allowed
+        else:
+            dirs[:] = [d for d in dirs if d != "__MACOSX"]
+
         for fname in files:
             if fname.startswith("._") or fname.startswith("."):
                 continue
-            p = Path(root) / fname
+            p = root_path / fname
             if p.suffix.lower() in SUPPORTED:
                 disk_files[str(p)] = p
+                # Track counts per top-level folder for the summary log
+                try:
+                    top = p.relative_to(library_path).parts[0]
+                except (ValueError, IndexError):
+                    top = "(root)"
+                counts_by_folder[top] = counts_by_folder.get(top, 0) + 1
+
+    if counts_by_folder:
+        summary = "  ".join(f"{k}: {v}" for k, v in sorted(counts_by_folder.items()))
+        log.debug("Scan: files by folder — %s", summary)
+
     return disk_files
 
 
@@ -205,15 +354,20 @@ def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
       3. Folder-based category override (keyword match on path segments)
       4. Extension-based category fallback
     """
+    import logging
+    log = logging.getLogger("manga.scan")
+
     title, filename_series, volume = _guess_metadata(path)
     book_type = _ext_to_type(path.suffix)
 
     # ── Category ──────────────────────────────────────────────────────────
     folder_category = _category_from_path(path, library_root)
     category = folder_category or _guess_category(book_type)
+    cat_source = "folder" if folder_category else f"ext ({book_type})"
 
     # ── Series ────────────────────────────────────────────────────────────
     series = _series_from_path(path, library_root, filename_series, folder_category)
+    series_source = "folder" if series and series != filename_series else "filename"
 
     # Rebuild title if series changed (folder gave us a better series name)
     if series and series != filename_series:
@@ -221,6 +375,13 @@ def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
             title = f"{series} T{volume:02d}"
         else:
             title = series
+
+    log.debug(
+        "Scan: %-40s  cat=%-10s (%-6s)  series=%-25s (%-8s)  vol=%s",
+        path.name, category, cat_source,
+        series or "(none)", series_source,
+        volume if volume is not None else "-",
+    )
 
     file_size = path.stat().st_size
 
@@ -242,8 +403,11 @@ def _insert_book(conn, path_str: str, path: Path, library_root: Path) -> str:
                 "UPDATE books SET cover_path = ? WHERE id = ?",
                 (str(cover), book_id),
             )
-    except Exception:
-        pass  # cover extraction is non-fatal
+            log.debug("Scan: cover extracted → %s", cover.name)
+        else:
+            log.debug("Scan: no cover for %s", path.name)
+    except Exception as e:
+        log.debug("Scan: cover extraction failed for %s: %s", path.name, e)
 
     return "added"
 
@@ -323,12 +487,14 @@ def scan_library_stream(
             # Phase 3 — remove orphaned DB entries
             orphans = db_paths - set(disk_files.keys())
             removed = len(orphans)
+            orphan_names = []
             for path_str in orphans:
                 conn.execute("DELETE FROM books WHERE path = ?", (path_str,))
                 log.debug("Scan: removed orphan %s", path_str)
+                orphan_names.append(Path(path_str).name)
 
             if removed:
-                yield {"type": "removed", "count": removed}
+                yield {"type": "removed", "count": removed, "paths": orphan_names}
 
         log.info("Scan done: +%d added, -%d removed, %d errors", added, removed, len(errors))
         yield {"type": "done", "added": added, "removed": removed, "errors": errors}
@@ -375,17 +541,45 @@ def scan_library(
 # ---------------------------------------------------------------------------
 
 def _guess_metadata(path: Path) -> tuple[str, str | None, int | None]:
-    """Extract title, series, volume from filename alone."""
+    """Extract title, series, volume from filename alone.
+
+    Patterns tried in order (first match wins):
+
+    1. "<series> - T<N>"         e.g. "One Piece - T01"
+    2. "Tome/Vol <N> - <title>"  e.g. "Tome 01 - Cerveau-choc !"
+       Volume leads; title is after the dash.  Series left to folder heuristic.
+    3. "<series> [tome|vol|…] <N>"  e.g. "Dragon Ball Tome 5" (volume trails)
+    """
     stem = path.stem
 
-    # Pattern: <series> - T<volume>  e.g. "One Piece - T01"
+    # Pattern 1 — <series> - T<N>  (volume trails as a T-prefixed number)
     m = re.match(r"^(.+?)\s*-\s*[Tt](\d+)$", stem)
     if m:
         series = m.group(1).strip()
         volume = int(m.group(2))
         return f"{series} T{volume:02d}", series, volume
 
-    # Pattern: <series> [v|vol|t|tome|volume] <digits>
+    # Pattern 2a — <series> T<N> - <subtitle>  e.g. "Astérix T01 - Astérix le Gaulois"
+    # Series is before the T-number; subtitle after the dash is ignored for title.
+    m = re.match(r"^(.+?)\s+[Tt]0*(\d+)\s*[-–]\s*.+$", stem)
+    if m:
+        series = m.group(1).strip()
+        volume = int(m.group(2))
+        return f"{series} T{volume:02d}", series, volume
+
+    # Pattern 2b — Tome/Vol <N> - <title>  (volume leads, no series in filename)
+    # Common in French BD: "Tome 01 - Cerveau-choc !"
+    # Series is NOT derivable from the filename alone; caller uses folder heuristic.
+    m = re.match(
+        r"^(?:tome|vol(?:ume)?)[\s.\-]*0*(\d+)[\s.\-–]+(.+)$",
+        stem, re.IGNORECASE,
+    )
+    if m:
+        volume = int(m.group(1))
+        subtitle = m.group(2).strip()
+        return subtitle, None, volume
+
+    # Pattern 3 — <series> [tome|vol|…] <N>  (volume trails as a word)
     m = re.search(
         r"^(.*?)[\s_\-\.]*(?:v|t|vol|tome|volume)[\s_\-\.]*(\d+)\s*$",
         stem, re.IGNORECASE,

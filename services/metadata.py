@@ -21,10 +21,14 @@ import re
 from pathlib import Path
 from typing import Any
 
+import logging
+
 import httpx
 
 import db.config as cfg
 from db.database import get_conn
+
+log = logging.getLogger("manga.metadata")
 
 TIMEOUT     = 14.0
 MAX_RESULTS = 10
@@ -88,7 +92,9 @@ async def fetch_and_store(book_id: int, source: str, query: str) -> list[dict]:
         "hardcover":   _fetch_hardcover,
         "openlib":     _fetch_openlib,
     }
+    log.debug("metadata: fetching book_id=%d from %s (query=%r)", book_id, source, query)
     results: list[dict] = await fetchers[source](query)
+    log.debug("metadata: %s returned %d result(s) for book_id=%d", source, len(results), book_id)
 
     storage = cfg.get("metadata_storage", "db")
 
@@ -105,6 +111,7 @@ async def fetch_and_store(book_id: int, source: str, query: str) -> list[dict]:
         row = _build_db_row(book_id, row_source, result, is_manual=False)
         if storage in ("db", "both"):
             _upsert_row(row)
+            log.debug("metadata: stored %s for book_id=%d — %r", row_source, book_id, result.get("title") or result.get("_title"))
         result["source"]     = row_source
         result["book_id"]    = book_id
         result["is_pinned"]  = False
@@ -114,6 +121,7 @@ async def fetch_and_store(book_id: int, source: str, query: str) -> list[dict]:
 
     if storage in ("file", "both"):
         _sync_sidecar_from_db(book_id)
+        log.debug("metadata: sidecar written for book_id=%d", book_id)
 
     return stored
 
@@ -162,6 +170,7 @@ def pin_metadata(book_id: int, metadata_id: int) -> None:
             "UPDATE metadata_cache SET is_pinned = 1 WHERE id = ? AND book_id = ?",
             (metadata_id, book_id),
         )
+    log.debug("metadata: pinned row id=%d for book_id=%d", metadata_id, book_id)
     storage = cfg.get("metadata_storage", "db")
     if storage in ("file", "both"):
         _sync_sidecar_from_db(book_id)
@@ -201,9 +210,11 @@ def save_manual(book_id: int, data: dict) -> dict:
     _upsert_row(row)
 
     # Sync book-table fields (title, series, volume) automatically
-    # so the main list/table always reflects manual metadata
+    # so the main list/table always reflects manual metadata.
+    # Whitelist is explicit: only these three columns may reach the SET clause.
+    _BOOK_SYNC_FIELDS = ("title", "series", "volume")
     book_sync: dict[str, Any] = {}
-    for field in ("title", "series", "volume"):
+    for field in _BOOK_SYNC_FIELDS:
         if field in data and data[field] is not None:
             book_sync[field] = data[field]
     if book_sync:
@@ -223,6 +234,7 @@ def save_manual(book_id: int, data: dict) -> dict:
             "SELECT * FROM metadata_cache WHERE book_id = ? AND source = 'manual'",
             (book_id,),
         ).fetchone()
+    log.debug("metadata: manual row saved for book_id=%d — fields: %s", book_id, list(data.keys()))
     return _parse_db_row(saved) if saved else {}
 
 
@@ -237,9 +249,13 @@ def apply_to_book(book_id: int, metadata_id: int, fields: list[str], pin: bool) 
         return
 
     meta = _parse_db_row(row)
+    # Whitelist: only title/series/volume may be copied to the books table.
+    # The caller-supplied 'fields' list is validated here — no raw key
+    # from user input reaches the SET clause.
+    _ALLOWED_BOOK_COPY = {"title", "series", "volume"}
     book_fields: dict[str, Any] = {}
     for f in fields:
-        if f in ("title", "series", "volume") and meta.get(f) is not None:
+        if f in _ALLOWED_BOOK_COPY and meta.get(f) is not None:
             book_fields[f] = meta[f]
 
     if book_fields:

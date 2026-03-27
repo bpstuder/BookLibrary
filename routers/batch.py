@@ -263,6 +263,9 @@ def batch_edit(body: BatchEditRequest):
         total = len(body.book_ids)
         ok = failed = 0
 
+        # Whitelist: split edits into known book-table columns vs metadata fields.
+        # Unknown keys in body.edits are silently routed to save_manual, which
+        # has its own validation — they never reach a raw SQL SET clause.
         book_fields = {k: v for k, v in body.edits.items() if k in _BOOK_TABLE_FIELDS}
         meta_fields = {k: v for k, v in body.edits.items() if k not in _BOOK_TABLE_FIELDS}
 
