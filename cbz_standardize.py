@@ -40,6 +40,12 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+try:
+    from PIL import Image, UnidentifiedImageError  # type: ignore
+    _PILLOW_AVAILABLE = True
+except ImportError:
+    _PILLOW_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,6 +87,7 @@ _FORBIDDEN_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 # ---------------------------------------------------------------------------
 
 def log(msg: str, verbose: bool = False, force: bool = False) -> None:
+    """Print msg if verbose or force is True."""
     if force or verbose:
         print(msg)
 
@@ -125,6 +132,31 @@ def _parse_volume_from_filename(stem: str) -> tuple[str | None, int | None]:
         return (title or None, volume)
 
     return (None, None)
+
+
+def _prompt_missing(
+    cbz_path: Path,
+    manga_title: str | None,
+    volume_num: int | None,
+    dry_run: bool,
+) -> tuple[str, int]:
+    """Prompt the user for any missing title/volume, or use placeholders in dry-run mode."""
+    if dry_run:
+        return manga_title or "<Title>", volume_num if volume_num is not None else 0
+
+    if not manga_title:
+        raw = _ask(f"  > Could not detect manga title for '{cbz_path.name}'. Enter title: ").strip()
+        manga_title = sanitize(raw) or "Manga"
+    if volume_num is None:
+        raw = _ask(
+            f"  > Could not detect volume number for '{cbz_path.name}'. Enter number: "
+        ).strip()
+        try:
+            volume_num = int(raw)
+        except ValueError:
+            print("    (non-numeric input, volume set to 0)", file=sys.stderr)
+            volume_num = 0
+    return manga_title, volume_num
 
 
 def resolve_cbz_name(cbz_path: Path, dry_run: bool) -> str:
@@ -174,26 +206,7 @@ def resolve_cbz_name(cbz_path: Path, dry_run: bool) -> str:
             )
 
     # --- 3. Interactive prompt if still incomplete ---
-    if dry_run:
-        if not manga_title:
-            manga_title = "<Title>"
-        if volume_num is None:
-            volume_num = 0
-    else:
-        if not manga_title:
-            manga_title = _ask(
-                f"  > Could not detect manga title for '{cbz_path.name}'. Enter title: "
-            ).strip()
-            manga_title = sanitize(manga_title) or "Manga"
-        if volume_num is None:
-            raw = _ask(
-                f"  > Could not detect volume number for '{cbz_path.name}'. Enter number: "
-            ).strip()
-            try:
-                volume_num = int(raw)
-            except ValueError:
-                print("    (non-numeric input, volume set to 0)", file=sys.stderr)
-                volume_num = 0
+    manga_title, volume_num = _prompt_missing(cbz_path, manga_title, volume_num, dry_run)
 
     output_name = f"{manga_title} - T{volume_num:02d}.cbz"
     log(f"  [name]    -> {output_name}", force=True)
@@ -223,7 +236,7 @@ def _read_comicinfo(cbz_path: Path) -> dict:
             data = zf.read(names[0])
             root = ET.fromstring(data)
             return {child.tag: (child.text or "") for child in root}
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log(f"  [meta]    Error reading ComicInfo.xml: {e}", force=True)
         return {}
 
@@ -299,11 +312,9 @@ def cleanup(extract_dir: Path, dry_run: bool, verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def check_pillow() -> bool:
-    try:
-        import PIL  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    """Return True if Pillow is installed and importable."""
+    import importlib.util  # pylint: disable=import-outside-toplevel
+    return importlib.util.find_spec("PIL") is not None
 
 
 def convert_to_webp(
@@ -318,8 +329,6 @@ def convert_to_webp(
     Deletes the source file after successful conversion.
     Requires Pillow: pip install Pillow
     """
-    from PIL import Image, UnidentifiedImageError  # late import — Pillow is optional
-
     converted: list[Path] = []
     # Filter out macOS junk before even trying
     valid_images = [p for p in images if _is_valid_image(p)]
@@ -373,6 +382,7 @@ def rename_with_csv(
     dry_run: bool,
     verbose: bool,
 ) -> list[Path]:
+    """Rename pages according to a pre-loaded CSV mapping."""
     renamed: list[Path] = []
     for img in images:
         row = csv_mapping.get(img.name)
@@ -530,8 +540,12 @@ def process_cbz(
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
+    """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description='Standardize CBZ manga files: flatten, clean, convert, rename to "<Manga> - T<XX>.cbz".',
+        description=(
+            'Standardize CBZ manga files: flatten, clean, convert,'
+            ' rename to "<Manga> - T<XX>.cbz".'
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("source", help="A .cbz file or a folder containing .cbz files")
@@ -567,6 +581,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Entry point: parse args, validate inputs, run the pipeline."""
     args = parse_args()
 
     source = Path(args.source)
@@ -594,7 +609,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not (0 <= args.webp_quality <= 100):
+        if not 0 <= args.webp_quality <= 100:
             print("Error: --webp-quality must be between 0 and 100.", file=sys.stderr)
             sys.exit(1)
 
@@ -627,7 +642,7 @@ def main() -> None:
                 verbose=args.verbose,
             )
             ok += 1
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"  [error]   {cbz.name}: {e}", file=sys.stderr)
             ko += 1
 
