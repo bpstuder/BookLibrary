@@ -36,15 +36,31 @@ The `docker-compose.yml` mounts your library as read-only and persists the datab
 
 Settings can be changed in two ways — **environment variables** always take priority over the Settings UI:
 
-| Variable           | Default          | Description                              |
-|--------------------|------------------|------------------------------------------|
-| `LIBRARY_PATH`     | `./library`      | Path to your book folder                 |
-| `PORT`             | `8000`           | HTTP port                                |
-| `DEBUG`            | `false`          | Enable /debug, /docs, auto-reload        |
-| `COMICVINE_API_KEY`| *(empty)*        | ComicVine API key (free at comicvine.com)|
-| `HARDCOVER_API_KEY`| *(empty)*        | Hardcover API key (free at hardcover.app)|
+| Variable            | Default              | Description                               |
+|---------------------|----------------------|-------------------------------------------|
+| `LIBRARY_PATH`      | `<project>/library`  | Path to your book folder                  |
+| `PORT`              | `8000`               | HTTP port                                 |
+| `DEBUG`             | `false`              | Enable /debug, /docs, auto-reload         |
+| `SCAN_INCLUDE`      | *(empty)*            | Whitelist: scan only these top-level folders (comma-separated) |
+| `SCAN_EXCLUDE`      | *(empty)*            | Blacklist: skip these top-level folders (comma-separated)      |
+| `COMICVINE_API_KEY` | *(empty)*            | ComicVine API key (free at comicvine.com) |
+| `HARDCOVER_API_KEY` | *(empty)*            | Hardcover API key (free at hardcover.app) |
 
-All other settings (WebP quality, metadata storage mode, enabled providers…) are managed in the Settings page and persisted in `data/config.json`.
+All other settings (WebP quality, metadata storage mode, enabled providers, custom categories…) are managed in the Settings page and persisted in `data/config.json`.
+
+### Scan folder filters
+
+Three modes are available in **Settings → Scan filters**:
+
+- **Scan all** — every subfolder is scanned (default)
+- **Whitelist** — only checked folders are scanned
+- **Blacklist** — checked folders are skipped
+
+Filters apply to **1st-level subdirectories** of `LIBRARY_PATH` only. A `.scanignore` file at the library root (one folder name per line) always takes effect regardless of the UI setting.
+
+### Custom categories
+
+Built-in categories (`manga`, `comics`, `book`, `unknown`) are matched by folder keyword. You can add custom categories from **Settings → Categories** — each has a name, label, folder list, and colour. Custom categories take priority over built-ins when their folder names overlap.
 
 ---
 
@@ -72,13 +88,14 @@ When `DEBUG=true`, interactive API docs are available at `/docs` (Swagger UI) an
 | `GET` | `/books/{id}/metadata` | List all cached metadata rows |
 | `POST` | `/books/{id}/move` | Move/rename the file |
 | `POST` | `/books/{id}/move/preview` | Preview move without applying |
+| `POST` | `/books/{id}/standardize` | Convert CBZ/CBR file (SSE stream) |
 
 #### Query parameters for `GET /books`
 
 | Parameter  | Type   | Default | Description |
 |------------|--------|---------|-------------|
 | `q`        | string | —       | Full-text search on title and series |
-| `category` | string | —       | Filter: `manga`, `comics`, `book`, `unknown` |
+| `category` | string | —       | Filter: `manga`, `comics`, `book`, `unknown`, or any custom category name |
 | `type`     | string | —       | Filter: `cbz`, `cbr`, `epub`, `pdf`, `mobi`, `azw3` |
 | `status`   | string | —       | Filter: `unread`, `reading`, `read` |
 | `series`   | string | —       | Filter by series name (partial match) |
@@ -113,12 +130,28 @@ When `DEBUG=true`, interactive API docs are available at `/docs` (Swagger UI) an
 
 Sources: `anilist`, `comicvine`, `googlebooks`, `hardcover`, `openlib`
 
-### Library
+### Library scan
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/scan` | Scan library folder, sync DB |
-| `POST` | `/books/{id}/standardize` | Convert CBZ/CBR (SSE stream) |
+| `POST` | `/scan` | Start a library scan (SSE stream) |
+| `DELETE` | `/scan` | Cancel the running scan |
+
+`POST /scan` streams progress via **Server-Sent Events**:
+
+```
+event: count
+data: {"total": 142}
+
+event: progress
+data: {"done": 12, "total": 142, "file": "One Piece T01.cbz", "action": "added"}
+
+event: removed
+data: {"count": 2, "paths": ["deleted.cbz"]}
+
+event: done
+data: {"added": 10, "removed": 2, "errors": []}
+```
 
 #### `POST /books/{id}/standardize` body
 
@@ -128,15 +161,6 @@ Sources: `anilist`, `comicvine`, `googlebooks`, `hardcover`, `openlib`
   "webp_quality": 85,
   "delete_old": false
 }
-```
-
-Response is a **Server-Sent Events** stream:
-```
-event: log
-data: [flatten]  page001.jpg → page001.jpg
-
-event: done
-data: /path/to/converted.cbz
 ```
 
 ### Batch operations
@@ -173,6 +197,11 @@ All batch endpoints stream progress via SSE.
 | `PATCH` | `/config` | Update settings |
 | `GET` | `/config/browse` | Browse filesystem directories |
 | `POST` | `/config/verify-path` | Validate a library path |
+| `GET` | `/config/scan-folders` | List library subfolders with scan status |
+| `GET` | `/config/categories` | List all categories (built-in + custom) |
+| `POST` | `/config/categories` | Create a custom category |
+| `PATCH` | `/config/categories/{name}` | Update a custom category |
+| `DELETE` | `/config/categories/{name}` | Delete a custom category |
 | `POST` | `/config/rename-all` | Batch rename files (SSE stream) |
 
 ### Debug (debug mode only)
@@ -197,12 +226,19 @@ All batch endpoints stream progress via SSE.
 
 ## File conversion
 
-The CBZ conversion pipeline:
+The CBZ conversion pipeline (`POST /books/{id}/standardize`):
 1. Extract archive to a temp folder
 2. Flatten nested image directories
 3. Remove non-image files (ComicInfo.xml, macOS `._*` files, etc.)
 4. Optionally convert images to WebP (requires Pillow)
 5. Repack as a CBZ with the same filename
+
+`cbz_standardize.py` is also usable as a standalone CLI tool:
+
+```bash
+python cbz_standardize.py manga.cbz --webp --webp-quality 85
+python cbz_standardize.py ./library/Manga/ --dry-run
+```
 
 Supported formats for conversion: **CBZ**, **CBR**
 
@@ -223,7 +259,7 @@ Key tables:
 ## Development
 
 ```bash
-# Debug mode (auto-reload, /docs endpoint)
+# Debug mode (auto-reload, /docs endpoint, verbose logs)
 python main.py --debug
 
 # Override library path at startup
@@ -236,27 +272,29 @@ python main.py --port 9000
 ### Project structure
 
 ```
-booklibrary/
+manga-collection/
 ├── main.py                 # Entry point, FastAPI app factory
 ├── cbz_standardize.py      # CBZ conversion pipeline (also usable as CLI)
+├── .pylintrc               # Pylint configuration
 ├── db/
 │   ├── config.py           # Settings management (env > disk > defaults)
 │   ├── database.py         # SQLite schema, migrations, connection context
 │   └── models.py           # Pydantic models (request/response schemas)
 ├── routers/
+│   ├── _utils.py           # Shared SSE streaming + file counting helpers
 │   ├── books.py            # Book CRUD, tags, status, move/rename
-│   ├── library.py          # Scan, CBZ conversion
+│   ├── library.py          # Scan (SSE), scan cancellation, CBZ conversion
 │   ├── metadata.py         # Metadata CRUD and scraping
 │   ├── batch.py            # Bulk operations (SSE streaming)
-│   ├── config.py           # Settings API, folder browser, batch rename
+│   ├── config.py           # Settings API, categories, scan filters, batch rename
 │   └── debug.py            # System diagnostics (debug mode only)
 ├── services/
-│   ├── scanner.py          # Library folder walker
-│   ├── covers.py           # Cover thumbnail extraction
+│   ├── scanner.py          # Library folder walker + category heuristics
+│   ├── covers.py           # Cover thumbnail extraction (CBZ/EPUB/PDF)
 │   ├── metadata.py         # External API scrapers (AniList, Google Books…)
 │   └── standardizer.py     # CBZ conversion wrapper for FastAPI
 ├── static/
-│   ├── app.js              # Single-file vanilla JS frontend (~2200 lines)
+│   ├── app.js              # Single-file vanilla JS frontend
 │   ├── favicon.svg         # App icon
 │   └── favicon.png         # App icon (32×32 PNG)
 └── templates/

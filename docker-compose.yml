@@ -19,10 +19,12 @@ services:
       LIBRARY_PATH: /app/library
       COMICVINE_API_KEY: ${COMICVINE_API_KEY:-}
       HARDCOVER_API_KEY: ${HARDCOVER_API_KEY:-}
+      SCAN_INCLUDE: ${SCAN_INCLUDE:-}
+      SCAN_EXCLUDE: ${SCAN_EXCLUDE:-}
       PORT: 8000
       DEBUG: ${DEBUG:-false}
     healthcheck:
-      test: ["CMD", "curl", "-f", "--head", "--silent", "http://localhost:8000/"]
+      test: ["CMD", "curl", "-f", "--silent", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
